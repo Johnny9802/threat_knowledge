@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 from typing import Dict, List, Optional, Any
+from datetime import date, datetime
 import yaml
 import jsonschema
 from jsonschema import validate
@@ -36,6 +37,24 @@ class PlaybookParser:
         with open(self.schema_path, 'r') as f:
             return yaml.safe_load(f)
 
+    def _convert_dates_to_strings(self, data: Any) -> Any:
+        """Recursively convert date/datetime objects to ISO format strings.
+
+        Args:
+            data: The data structure to process
+
+        Returns:
+            The data with all date objects converted to strings
+        """
+        if isinstance(data, (date, datetime)):
+            return data.isoformat()
+        elif isinstance(data, dict):
+            return {key: self._convert_dates_to_strings(value) for key, value in data.items()}
+        elif isinstance(data, list):
+            return [self._convert_dates_to_strings(item) for item in data]
+        else:
+            return data
+
     def load_playbook(self, playbook_id: str) -> Dict[str, Any]:
         """Load a specific playbook by ID.
 
@@ -62,6 +81,9 @@ class PlaybookParser:
         # Load and parse YAML
         with open(playbook_path, 'r') as f:
             playbook_data = yaml.safe_load(f)
+
+        # Convert date objects to strings for JSON schema validation
+        playbook_data = self._convert_dates_to_strings(playbook_data)
 
         # Validate against schema
         if self.schema:
@@ -129,6 +151,8 @@ class PlaybookParser:
                     try:
                         with open(playbook_file, 'r') as f:
                             data = yaml.safe_load(f)
+                            # Convert dates to strings
+                            data = self._convert_dates_to_strings(data)
                             # Add summary info
                             playbooks.append({
                                 'id': data.get('id'),

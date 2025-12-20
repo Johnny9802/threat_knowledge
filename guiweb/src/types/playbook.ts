@@ -18,6 +18,11 @@ export interface Playbook {
     elastic?: string;
     sigma?: string;
   };
+  queries_content?: {
+    splunk?: string;
+    elastic?: string;
+    sigma?: string;
+  };
   investigation_steps: string[];
   false_positives: string[];
   iocs?: IOC[];

@@ -412,6 +412,9 @@ async def get_playbook(playbook_id: str) -> Dict[str, Any]:
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Playbook {playbook_id} not found")
     except Exception as e:
+        import traceback
+        error_details = f"{str(e)}\n{traceback.format_exc()}"
+        print(f"Error loading playbook {playbook_id}: {error_details}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
