@@ -415,11 +415,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Groq** - Fast AI inference
 - **Click** & **Rich** - CLI framework and terminal formatting
 
-## 📧 Contact
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/threat-hunting-playbook/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/threat-hunting-playbook/discussions)
-- **Email**: security@example.com
 
 ## ⚠️ Disclaimer
 
@@ -427,6 +423,6 @@ This tool is provided for legitimate security research, threat hunting, and defe
 
 ---
 
-**Built with ❤️ by the Threat Hunting Community**
+**Built with ❤️ *
 
 *Happy Hunting! 🎯*
