@@ -1,0 +1,132 @@
+// OS Credential Dumping Detection - Elastic KQL Queries
+// Detects LSASS access, credential theft, and dumping tools
+
+// Query 1: LSASS Process Access
+// Detects processes accessing LSASS memory
+event.category: "process" AND event.action: "ProcessAccess" AND
+process.name: lsass.exe AND
+winlog.event_data.GrantedAccess: (0x1010 OR 0x1410 OR 0x1438 OR 0x143a OR 0x1fffff OR 0x1000)
+
+// Query 2: Mimikatz Execution Detection
+// Detects Mimikatz by command line patterns
+event.category: "process" AND event.type: "start" AND
+process.command_line: (*sekurlsa* OR *lsadump* OR *kerberos::* OR
+  *privilege::debug* OR *token::elevate* OR *vault::cred* OR
+  *Invoke-Mimikatz* OR *mimikatz.exe*)
+
+// Query 3: Procdump Against LSASS
+// Detects procdump or similar tools dumping LSASS
+event.category: "process" AND event.type: "start" AND (
+  (process.name: procdump.exe OR process.name: procdump64.exe) AND
+  process.command_line: (*-ma* AND *lsass*)
+)
+
+// Query 4: Rundll32 MiniDump Technique (Comsvcs.dll)
+// Detects rundll32 abusing comsvcs.dll for LSASS dumping
+event.category: "process" AND event.type: "start" AND
+process.name: rundll32.exe AND
+process.command_line: (*comsvcs* AND (*MiniDump* OR *#24*) AND *lsass*)
+
+// Query 5: Registry SAM Dumping
+// Detects attempts to export or save SAM registry hive
+event.category: "process" AND event.type: "start" AND
+process.name: reg.exe AND
+process.command_line: ((*save* OR *export*) AND (*HKLM\\SAM* OR *HKLM\\SYSTEM* OR *HKLM\\SECURITY*))
+
+// Query 6: SAM File Copy
+// Detects copying of SAM database file
+event.category: "process" AND event.type: "start" AND
+process.command_line: (*copy* AND *\\windows\\system32\\config\\SAM*)
+
+// Query 7: Shadow Copy for Credential Access
+// Detects shadow copy creation (often used for NTDS/SAM extraction)
+event.category: "process" AND event.type: "start" AND (
+  (process.name: vssadmin.exe AND process.command_line: (*create* AND *shadow*)) OR
+  (process.name: wmic.exe AND process.command_line: (*shadowcopy* AND *create*))
+)
+
+// Query 8: NTDS.dit File Access
+// Detects access to Active Directory database
+event.category: "file" AND file.path: *\\ntds.dit* AND
+event.action: (open OR read OR copy)
+
+// Query 9: Memory Dump File Creation
+// Detects .dmp files being created in suspicious locations
+event.category: "file" AND event.type: "creation" AND
+file.extension: dmp AND
+file.path: (*\\Temp\\* OR *\\AppData\\* OR *\\Public\\* OR *\\ProgramData\\*)
+
+// Query 10: PowerShell Credential Dumping
+// Detects PowerShell scripts accessing credentials
+event.category: "process" AND event.type: "start" AND
+process.name: (powershell.exe OR pwsh.exe) AND
+process.command_line: (*Invoke-Mimikatz* OR *Out-Minidump* OR *Get-LSASecret* OR
+  *Get-VaultCredential* OR *Invoke-CredentialInjection* OR *sekurlsa*)
+
+// Query 11: Task Manager Creating LSASS Dump
+// Detects Task Manager being used to dump LSASS (right-click > Create dump file)
+event.category: "file" AND event.type: "creation" AND
+file.name: lsass*.dmp AND
+process.name: taskmgr.exe
+
+// Query 12: LSASS Network Access
+// Detects network connections from LSASS (unusual, may indicate injection)
+event.category: "network" AND event.type: "start" AND
+process.name: lsass.exe
+
+// Query 13: Credential Access via Registry
+// Detects direct registry access to credential storage
+event.category: "registry" AND (
+  registry.path: *\\SAM\\Domains\\Account\\Users* OR
+  registry.path: *\\Security\\Policy\\Secrets* OR
+  registry.path: *\\Security\\Cache*
+) AND event.action: (query OR read)
+
+// Query 14: DCSync Attack Detection
+// Detects DCSync (Directory Replication Service abuse)
+event.category: "iam" AND event.action: "Directory Service Access" AND
+winlog.event_data.Properties: (*1131f6aa-9c07-11d1-f79f-00c04fc2dcd2* OR
+  *1131f6ad-9c07-11d1-f79f-00c04fc2dcd2* OR
+  *89e95b76-444d-4c62-991a-0facbeda640c*)
+
+// Query 15: Windows Credential Manager Access
+// Detects access to stored credentials
+event.category: "process" AND event.type: "start" AND (
+  process.command_line: (*vaultcmd* AND */list*) OR
+  process.command_line: (*cmdkey* AND */list*)
+)
+
+// Query 16: LSASS Access from Non-Standard Process
+// Detects LSASS access from unexpected processes
+event.category: "process" AND event.action: "ProcessAccess" AND
+process.name: lsass.exe AND NOT (
+  winlog.event_data.SourceImage: (*\\System32\\* OR *\\SysWOW64\\*) OR
+  winlog.event_data.SourceImage: (*svchost.exe OR *wmiprvse.exe OR *services.exe OR *csrss.exe*)
+)
+
+// Query 17: Multiple LSASS Access Attempts
+// Detects repeated LSASS access (potential brute force or scanning)
+event.category: "process" AND event.action: "ProcessAccess" AND process.name: lsass.exe
+| stats count() by winlog.event_data.SourceImage, host.name
+| where count > 5
+
+// Query 18: Credential Dumping Tool File Names
+// Detects known credential dumping tool file names
+event.category: "process" AND event.type: "start" AND
+process.name: (mimikatz.exe OR procdump.exe OR procdump64.exe OR
+  pwdump.exe OR gsecdump.exe OR wce.exe OR fgdump.exe OR
+  lazagne.exe OR mimikittenz.exe OR nanodump.exe)
+
+// Query 19: Suspicious LSASS Handle Request
+// Detects handle requests to LSASS with suspicious access rights
+event.category: "process" AND event.code: 4656 AND
+winlog.event_data.ObjectName: *\\lsass.exe AND
+winlog.event_data.AccessMask: (0x1010 OR 0x1410 OR 0x1fffff)
+
+// Query 20: Credential File Exfiltration
+// Detects copying of credential-related files
+event.category: "process" AND event.type: "start" AND
+process.command_line: (
+  (*copy* OR *xcopy* OR *robocopy* OR *move*) AND
+  (*ntds.dit* OR *SAM* OR *SYSTEM* OR *SECURITY* OR *.dmp*)
+)

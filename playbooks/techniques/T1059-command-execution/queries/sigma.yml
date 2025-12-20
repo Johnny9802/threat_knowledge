@@ -1,0 +1,276 @@
+title: Encoded PowerShell Command Execution
+id: e1a0b1c2-d3e4-4f5a-8b9c-0d1e2f3a4b5c
+status: production
+description: Detects PowerShell execution with base64 encoding or obfuscation techniques
+author: Threat Hunting Team
+date: 2024/02/10
+modified: 2025/12/20
+references:
+  - https://attack.mitre.org/techniques/T1059/001/
+  - https://github.com/danielbohannon/Invoke-Obfuscation
+tags:
+  - attack.execution
+  - attack.t1059.001
+  - attack.defense_evasion
+  - attack.t1027
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_powershell:
+    Image|endswith:
+      - '\powershell.exe'
+      - '\pwsh.exe'
+  selection_encoding:
+    CommandLine|contains:
+      - '-enc'
+      - '-EncodedCommand'
+      - '-e '
+      - 'FromBase64String'
+  selection_obfuscation:
+    CommandLine|contains:
+      - '-w hidden'
+      - '-WindowStyle Hidden'
+      - '-NoP'
+      - '-NonI'
+      - '-Bypass'
+      - 'Invoke-Expression'
+      - ' IEX '
+      - ' ICM '
+      - '[char[]]'
+      - '-Join'
+  condition: selection_powershell and (selection_encoding or selection_obfuscation)
+falsepositives:
+  - Legitimate administrative scripts
+  - Security tools and monitoring agents
+  - Automated deployment systems
+level: high
+---
+title: PowerShell Download Cradle
+id: f2b3c4d5-e6a7-5b8c-9d0e-1f2a3b4c5d6e
+status: production
+description: Detects PowerShell downloading content from remote sources
+author: Threat Hunting Team
+date: 2024/02/10
+modified: 2025/12/20
+references:
+  - https://attack.mitre.org/techniques/T1059/001/
+  - https://attack.mitre.org/techniques/T1105/
+tags:
+  - attack.execution
+  - attack.t1059.001
+  - attack.command_and_control
+  - attack.t1105
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_powershell:
+    Image|endswith:
+      - '\powershell.exe'
+      - '\pwsh.exe'
+  selection_download:
+    CommandLine|contains:
+      - 'DownloadString'
+      - 'DownloadFile'
+      - 'Invoke-WebRequest'
+      - ' IWR '
+      - 'wget '
+      - 'Net.WebClient'
+      - 'Start-BitsTransfer'
+  selection_url:
+    CommandLine|contains:
+      - 'http://'
+      - 'https://'
+      - 'ftp://'
+  condition: selection_powershell and selection_download and selection_url
+falsepositives:
+  - Software installation scripts
+  - Update mechanisms
+  - IT administration tools
+level: high
+---
+title: Script Execution from Suspicious Location
+id: a3b4c5d6-e7f8-6c9d-0e1f-2a3b4c5d6e7f
+status: production
+description: Detects scripts and executables running from temporary or public directories
+author: Threat Hunting Team
+date: 2024/02/10
+modified: 2025/12/20
+references:
+  - https://attack.mitre.org/techniques/T1059/
+tags:
+  - attack.execution
+  - attack.t1059
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_location:
+    Image|contains:
+      - '\AppData\Local\Temp\'
+      - '\Users\Public\'
+      - '\Windows\Temp\'
+      - '\ProgramData\'
+  selection_extensions:
+    Image|endswith:
+      - '.exe'
+      - '.bat'
+      - '.cmd'
+      - '.vbs'
+      - '.js'
+      - '.ps1'
+      - '.hta'
+  filter_legitimate:
+    Image|contains:
+      - '\AppData\Local\Temp\7z'
+      - '\AppData\Local\Temp\WinRAR'
+      - '\AppData\Local\Temp\is-'
+  condition: selection_location and selection_extensions and not filter_legitimate
+falsepositives:
+  - Software installers
+  - Temporary extraction during updates
+  - Legitimate scripts
+level: medium
+---
+title: Living Off The Land Binary (LOLBin) Abuse
+id: b4c5d6e7-f8a9-7d0e-1f2a-3b4c5d6e7f8a
+status: production
+description: Detects abuse of legitimate Windows binaries for malicious purposes
+author: Threat Hunting Team
+date: 2024/02/10
+modified: 2025/12/20
+references:
+  - https://lolbas-project.github.io/
+  - https://attack.mitre.org/techniques/T1218/
+tags:
+  - attack.execution
+  - attack.defense_evasion
+  - attack.t1218
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_certutil:
+    Image|endswith: '\certutil.exe'
+    CommandLine|contains:
+      - '-decode'
+      - '-urlcache'
+      - 'http'
+  selection_bitsadmin:
+    Image|endswith: '\bitsadmin.exe'
+    CommandLine|contains:
+      - '/transfer'
+      - '/download'
+  selection_regsvr32:
+    Image|endswith: '\regsvr32.exe'
+    CommandLine|contains:
+      - '/i:http'
+      - 'scrobj.dll'
+  selection_rundll32:
+    Image|endswith: '\rundll32.exe'
+    CommandLine|contains:
+      - 'javascript:'
+      - 'vbscript:'
+      - 'http'
+  selection_wmic:
+    Image|endswith: '\wmic.exe'
+    CommandLine|contains:
+      - 'process call create'
+      - '/format:http'
+  condition: 1 of selection_*
+falsepositives:
+  - Rare legitimate administrative activity
+  - Some security tools
+level: high
+---
+title: Suspicious Office Application Child Process
+id: c5d6e7f8-a9b0-8e1f-2a3b-4c5d6e7f8a9b
+status: production
+description: Detects Office applications spawning suspicious child processes
+author: Threat Hunting Team
+date: 2024/02/10
+modified: 2025/12/20
+references:
+  - https://attack.mitre.org/techniques/T1566/001/
+  - https://attack.mitre.org/techniques/T1204/002/
+tags:
+  - attack.execution
+  - attack.t1059
+  - attack.initial_access
+  - attack.t1566.001
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_parent:
+    ParentImage|endswith:
+      - '\WINWORD.EXE'
+      - '\EXCEL.EXE'
+      - '\POWERPNT.EXE'
+      - '\OUTLOOK.EXE'
+      - '\MSACCESS.EXE'
+  selection_child:
+    Image|endswith:
+      - '\powershell.exe'
+      - '\cmd.exe'
+      - '\wscript.exe'
+      - '\cscript.exe'
+      - '\mshta.exe'
+      - '\rundll32.exe'
+      - '\regsvr32.exe'
+      - '\certutil.exe'
+      - '\bitsadmin.exe'
+  filter_legitimate:
+    CommandLine|contains:
+      - 'Program Files'
+  condition: selection_parent and selection_child and not filter_legitimate
+falsepositives:
+  - Legitimate macros from trusted sources
+  - Office add-ins and plugins
+  - Automated business workflows
+level: high
+---
+title: PowerShell Script Block with Malicious Patterns
+id: d6e7f8a9-b0c1-9f2a-3b4c-5d6e7f8a9b0c
+status: production
+description: Detects PowerShell script blocks containing known malicious patterns
+author: Threat Hunting Team
+date: 2024/02/10
+modified: 2025/12/20
+references:
+  - https://attack.mitre.org/techniques/T1059/001/
+tags:
+  - attack.execution
+  - attack.t1059.001
+  - attack.defense_evasion
+logsource:
+  product: windows
+  service: powershell
+  definition: 'Enable PowerShell Script Block Logging (Event ID 4104)'
+detection:
+  selection_offensive_tools:
+    ScriptBlockText|contains:
+      - 'Invoke-Mimikatz'
+      - 'DumpCreds'
+      - 'Invoke-CredentialInjection'
+      - 'Invoke-TokenManipulation'
+      - 'Invoke-ReflectivePEInjection'
+      - 'Invoke-Shellcode'
+      - 'Get-GPPPassword'
+      - 'Out-Minidump'
+  selection_obfuscation:
+    ScriptBlockText|contains:
+      - 'FromBase64String'
+      - 'IO.Compression'
+      - 'Bypass'
+      - 'AMSI'
+  selection_network:
+    ScriptBlockText|contains:
+      - 'Net.Sockets.TCPClient'
+      - 'System.Net.Sockets'
+  condition: selection_offensive_tools or (selection_obfuscation and selection_network)
+falsepositives:
+  - Security assessment tools (authorized pentesting)
+  - Security training environments
+level: high

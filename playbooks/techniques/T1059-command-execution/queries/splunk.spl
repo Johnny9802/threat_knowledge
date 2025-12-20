@@ -1,0 +1,176 @@
+```
+# Malicious Command and Script Execution - Splunk SPL Queries
+# Detects suspicious PowerShell, CMD, and scripting activity
+
+# Query 1: Obfuscated or Encoded PowerShell Commands
+# Detects PowerShell with base64, encoding, compression, or obfuscation
+index=windows sourcetype="WinEventLog:Security" EventCode=4688
+  (CommandLine="*powershell*" OR CommandLine="*pwsh*")
+  (
+    # Base64 encoding
+    CommandLine="*-enc*" OR CommandLine="*-EncodedCommand*"
+    OR CommandLine="*-e *" OR CommandLine="*::FromBase64String*"
+    # Download cradles
+    OR CommandLine="*DownloadString*" OR CommandLine="*DownloadFile*"
+    OR CommandLine="*Invoke-WebRequest*" OR CommandLine="*IWR *" OR CommandLine="*wget*"
+    OR CommandLine="*Net.WebClient*" OR CommandLine="*Start-BitsTransfer*"
+    # Obfuscation techniques
+    OR CommandLine="*-w hidden*" OR CommandLine="*-WindowStyle Hidden*"
+    OR CommandLine="*-NoP*" OR CommandLine="*-NonI*" OR CommandLine="*-Bypass*"
+    OR CommandLine="*Invoke-Expression*" OR CommandLine="*IEX *" OR CommandLine="*ICM *"
+    # Compression
+    OR CommandLine="*IO.Compression*" OR CommandLine="*[char[]](*"
+    # Reflection and invoke
+    OR CommandLine="*System.Reflection.Assembly*" OR CommandLine="*-Join*"
+  )
+| rex field=CommandLine "(?i)-enc(?:odedcommand)?\s+(?<encoded_command>[A-Za-z0-9+/=]{20,})"
+| eval has_encoding=if(isnotnull(encoded_command), "Yes", "No")
+| eval has_download=if(match(CommandLine, "(?i)(DownloadString|DownloadFile|WebRequest|WebClient|BitsTransfer)"), "Yes", "No")
+| eval has_obfuscation=if(match(CommandLine, "(?i)(hidden|nop|noni|bypass|iex|icm|reflection)"), "Yes", "No")
+| eval risk_score=0
+| eval risk_score=if(has_encoding="Yes", risk_score+30, risk_score)
+| eval risk_score=if(has_download="Yes", risk_score+40, risk_score)
+| eval risk_score=if(has_obfuscation="Yes", risk_score+20, risk_score)
+| where risk_score >= 40
+| stats
+    count as exec_count,
+    values(ComputerName) as hosts,
+    max(risk_score) as max_risk
+  by User, CommandLine, has_encoding, has_download, has_obfuscation
+| sort - max_risk, - exec_count
+| table User, CommandLine, has_encoding, has_download, has_obfuscation, max_risk, exec_count, hosts
+
+# Query 2: Suspicious Command Execution from Unusual Locations
+# Detects scripts and executables running from temp, public, or appdata directories
+index=windows sourcetype="WinEventLog:*" (EventCode=4688 OR EventCode=1)
+(
+  NewProcessName="*\\AppData\\Local\\Temp\\*" OR NewProcessName="*\\Users\\Public\\*"
+  OR NewProcessName="*\\Windows\\Temp\\*" OR NewProcessName="*\\Temp\\*"
+  OR Image="*\\AppData\\Local\\Temp\\*" OR Image="*\\Users\\Public\\*"
+  OR Image="*\\Windows\\Temp\\*"
+)
+(
+  NewProcessName="*.exe" OR NewProcessName="*.bat" OR NewProcessName="*.cmd"
+  OR NewProcessName="*.vbs" OR NewProcessName="*.js" OR NewProcessName="*.ps1"
+  OR Image="*.exe" OR Image="*.bat" OR Image="*.cmd"
+  OR Image="*.vbs" OR Image="*.js" OR Image="*.ps1"
+)
+| eval process_path=coalesce(NewProcessName, Image)
+| eval process_name=mvindex(split(process_path, "\\"), -1)
+| rex field=process_path "(?<execution_location>\\AppData\\Local\\Temp\\|\\Users\\Public\\|\\Windows\\Temp\\)"
+| stats
+    count as exec_count,
+    values(ComputerName) as affected_hosts,
+    values(CommandLine) as command_lines,
+    dc(ComputerName) as host_count
+  by User, process_name, execution_location
+| where exec_count > 1 OR host_count > 1
+| sort - host_count, - exec_count
+| table User, process_name, execution_location, exec_count, host_count, affected_hosts, command_lines
+
+# Query 3: LOLBin Abuse - Living Off The Land Binaries
+# Detects abuse of legitimate Windows binaries for malicious purposes
+index=windows sourcetype="WinEventLog:*" (EventCode=4688 OR EventCode=1)
+(
+  # Scripting and execution
+  (NewProcessName="*\\wscript.exe" OR NewProcessName="*\\cscript.exe" OR NewProcessName="*\\mshta.exe"
+   OR Image="*\\wscript.exe" OR Image="*\\cscript.exe" OR Image="*\\mshta.exe")
+  OR
+  # DLL execution
+  (NewProcessName="*\\rundll32.exe" OR NewProcessName="*\\regsvr32.exe" OR Image="*\\rundll32.exe" OR Image="*\\regsvr32.exe")
+  (CommandLine="*http*" OR CommandLine="*scrobj.dll*" OR CommandLine="*/i:*")
+  OR
+  # BITS abuse
+  (NewProcessName="*\\bitsadmin.exe" OR Image="*\\bitsadmin.exe")
+  (CommandLine="*/transfer*" OR CommandLine="*/download*")
+  OR
+  # Certificate utility
+  (NewProcessName="*\\certutil.exe" OR Image="*\\certutil.exe")
+  (CommandLine="*-decode*" OR CommandLine="*-urlcache*" OR CommandLine="*http*")
+  OR
+  # Windows Management
+  (NewProcessName="*\\wmic.exe" OR Image="*\\wmic.exe")
+  (CommandLine="*/format:*http*" OR CommandLine="*process call create*")
+)
+| eval process_name=mvindex(split(coalesce(NewProcessName, Image), "\\"), -1)
+| eval lolbin_type=case(
+    match(process_name, "(?i)(wscript|cscript|mshta)"), "Script Execution",
+    match(process_name, "(?i)(rundll32|regsvr32)"), "DLL Execution",
+    match(process_name, "(?i)bitsadmin"), "BITS Transfer",
+    match(process_name, "(?i)certutil"), "Certificate Utility",
+    match(process_name, "(?i)wmic"), "WMI",
+    1=1, "Other"
+  )
+| stats
+    count as exec_count,
+    values(ComputerName) as hosts,
+    values(CommandLine) as commands,
+    dc(User) as user_count
+  by User, process_name, lolbin_type
+| where exec_count > 2 OR user_count > 1
+| sort - exec_count
+| table User, process_name, lolbin_type, exec_count, user_count, hosts, commands
+
+# Query 4: PowerShell ScriptBlock Logging - Malicious Patterns
+# Analyzes PowerShell script block logs for suspicious code patterns
+index=windows sourcetype="WinEventLog:Microsoft-Windows-PowerShell/Operational" EventCode=4104
+(
+  ScriptBlockText="*Invoke-Mimikatz*" OR ScriptBlockText="*DumpCreds*"
+  OR ScriptBlockText="*Invoke-CredentialInjection*" OR ScriptBlockText="*Invoke-TokenManipulation*"
+  OR ScriptBlockText="*Invoke-ReflectivePEInjection*" OR ScriptBlockText="*Invoke-Shellcode*"
+  OR ScriptBlockText="*Empire*" OR ScriptBlockText="*Invoke-MS16032*"
+  OR ScriptBlockText="*Add-Persistence*" OR ScriptBlockText="*Get-GPPPassword*"
+  OR ScriptBlockText="*Invoke-WMICommand*" OR ScriptBlockText="*Out-Minidump*"
+  OR ScriptBlockText="*Net.Sockets.TCPClient*" OR ScriptBlockText="*System.IO.Compression*"
+  OR ScriptBlockText="*FromBase64String*" OR ScriptBlockText="*Bypass*AMSI*"
+)
+| rex field=ScriptBlockText max_match=10 "(?i)(?<suspicious_function>Invoke-[A-Za-z]+|Get-[A-Za-z]+|Set-[A-Za-z]+|Add-[A-Za-z]+)"
+| eval script_length=len(ScriptBlockText)
+| eval has_base64=if(match(ScriptBlockText, "(?i)FromBase64String"), "Yes", "No")
+| eval has_network=if(match(ScriptBlockText, "(?i)(TCPClient|WebClient|WebRequest)"), "Yes", "No")
+| eval has_amsi_bypass=if(match(ScriptBlockText, "(?i)(AMSI|Bypass)"), "Yes", "No")
+| stats
+    count as exec_count,
+    values(ComputerName) as hosts,
+    values(suspicious_function) as functions,
+    max(script_length) as max_script_length
+  by ScriptBlockId, User, has_base64, has_network, has_amsi_bypass
+| where exec_count > 1 OR max_script_length > 5000
+| sort - max_script_length, - exec_count
+| table ScriptBlockId, User, exec_count, has_base64, has_network, has_amsi_bypass, max_script_length, functions, hosts
+
+# Query 5: Suspicious Parent-Child Process Relationships
+# Detects unusual process execution chains that may indicate exploitation
+index=windows sourcetype="WinEventLog:Sysmon" EventCode=1
+(
+  # Office applications spawning suspicious children
+  (ParentImage="*\\WINWORD.EXE" OR ParentImage="*\\EXCEL.EXE" OR ParentImage="*\\POWERPNT.EXE")
+  (Image="*\\powershell.exe" OR Image="*\\cmd.exe" OR Image="*\\wscript.exe"
+   OR Image="*\\cscript.exe" OR Image="*\\mshta.exe" OR Image="*\\rundll32.exe")
+  OR
+  # Web browsers spawning scripting engines
+  (ParentImage="*\\chrome.exe" OR ParentImage="*\\firefox.exe" OR ParentImage="*\\iexplore.exe" OR ParentImage="*\\msedge.exe")
+  (Image="*\\powershell.exe" OR Image="*\\cmd.exe" OR Image="*\\wscript.exe")
+  OR
+  # Email clients spawning interpreters
+  (ParentImage="*\\outlook.exe" OR ParentImage="*\\thunderbird.exe")
+  (Image="*\\powershell.exe" OR Image="*\\cmd.exe" OR Image="*\\wscript.exe")
+)
+| eval parent_process=mvindex(split(ParentImage, "\\"), -1)
+| eval child_process=mvindex(split(Image, "\\"), -1)
+| eval parent_category=case(
+    match(ParentImage, "(?i)(WINWORD|EXCEL|POWERPNT)"), "Office",
+    match(ParentImage, "(?i)(chrome|firefox|iexplore|msedge)"), "Browser",
+    match(ParentImage, "(?i)(outlook|thunderbird)"), "Email",
+    1=1, "Other"
+  )
+| stats
+    count as spawn_count,
+    values(ComputerName) as hosts,
+    values(CommandLine) as commands,
+    dc(ComputerName) as host_count
+  by parent_process, child_process, parent_category, User
+| where spawn_count > 1 OR host_count > 1
+| sort - spawn_count
+| table parent_process, child_process, parent_category, User, spawn_count, host_count, hosts, commands
+```

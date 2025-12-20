@@ -1,0 +1,331 @@
+title: LSASS Memory Access
+id: e1f2a3b4-c5d6-5e7f-8a9b-0c1d2e3f4a5b
+status: production
+description: Detects processes accessing LSASS memory, indicating potential credential dumping
+author: Threat Hunting Team
+date: 2024/03/05
+modified: 2025/12/20
+references:
+  - https://attack.mitre.org/techniques/T1003/001/
+  - https://www.microsoft.com/security/blog/2022/10/05/detecting-and-preventing-lsass-credential-dumping-attacks/
+tags:
+  - attack.credential_access
+  - attack.t1003.001
+logsource:
+  category: process_access
+  product: windows
+detection:
+  selection:
+    TargetImage|endswith: '\lsass.exe'
+    GrantedAccess:
+      - '0x1010'
+      - '0x1410'
+      - '0x1438'
+      - '0x143a'
+      - '0x1fffff'
+      - '0x1000'
+  filter_legitimate:
+    SourceImage|startswith:
+      - 'C:\Program Files\'
+      - 'C:\Program Files (x86)\'
+    SourceImage|endswith:
+      - '\wmiprvse.exe'
+      - '\services.exe'
+      - '\csrss.exe'
+      - '\wininit.exe'
+  condition: selection and not filter_legitimate
+falsepositives:
+  - Antivirus and EDR products
+  - Legitimate debugging tools
+  - Some system utilities
+level: critical
+---
+title: Mimikatz Command Execution
+id: f2a3b4c5-d6e7-6f8a-9b0c-1d2e3f4a5b6c
+status: production
+description: Detects execution of Mimikatz credential dumping tool
+author: Threat Hunting Team
+date: 2024/03/05
+modified: 2025/12/20
+references:
+  - https://attack.mitre.org/techniques/T1003/
+  - https://github.com/gentilkiwi/mimikatz
+tags:
+  - attack.credential_access
+  - attack.t1003
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_cli:
+    CommandLine|contains:
+      - 'sekurlsa::'
+      - 'lsadump::'
+      - 'kerberos::'
+      - 'privilege::debug'
+      - 'token::elevate'
+      - 'vault::cred'
+      - 'Invoke-Mimikatz'
+  selection_filename:
+    Image|endswith: '\mimikatz.exe'
+    OriginalFileName: 'mimikatz.exe'
+  condition: selection_cli or selection_filename
+falsepositives:
+  - Authorized security assessments
+  - Security training environments
+level: critical
+---
+title: LSASS Dump via Procdump
+id: a3b4c5d6-e7f8-7a9b-0c1d-2e3f4a5b6c7d
+status: production
+description: Detects using Procdump or similar tools to dump LSASS memory
+author: Threat Hunting Team
+date: 2024/03/05
+modified: 2025/12/20
+references:
+  - https://attack.mitre.org/techniques/T1003/001/
+  - https://docs.microsoft.com/en-us/sysinternals/downloads/procdump
+tags:
+  - attack.credential_access
+  - attack.t1003.001
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    Image|endswith:
+      - '\procdump.exe'
+      - '\procdump64.exe'
+    CommandLine|contains:
+      - '-ma'
+      - 'lsass'
+  condition: selection
+falsepositives:
+  - Legitimate process debugging
+  - Crash dump analysis
+level: high
+---
+title: Credential Dumping via Comsvcs DLL
+id: b4c5d6e7-f8a9-8b0c-1d2e-3f4a5b6c7d8e
+status: production
+description: Detects credential dumping using rundll32 and comsvcs.dll MiniDump technique
+author: Threat Hunting Team
+date: 2024/03/05
+modified: 2025/12/20
+references:
+  - https://attack.mitre.org/techniques/T1003/001/
+  - https://lolbas-project.github.io/lolbas/Libraries/Comsvcs/
+tags:
+  - attack.credential_access
+  - attack.t1003.001
+  - attack.defense_evasion
+  - attack.t1218.011
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    Image|endswith: '\rundll32.exe'
+    CommandLine|contains|all:
+      - 'comsvcs'
+      - 'MiniDump'
+  selection_alt:
+    Image|endswith: '\rundll32.exe'
+    CommandLine|contains|all:
+      - 'comsvcs'
+      - '#24'
+  condition: selection or selection_alt
+falsepositives:
+  - Very unlikely - should be investigated immediately
+level: critical
+---
+title: SAM Registry Hive Export
+id: c5d6e7f8-a9b0-9c1d-2e3f-4a5b6c7d8e9f
+status: production
+description: Detects attempts to export or save SAM, SYSTEM, or SECURITY registry hives
+author: Threat Hunting Team
+date: 2024/03/05
+modified: 2025/12/20
+references:
+  - https://attack.mitre.org/techniques/T1003/002/
+tags:
+  - attack.credential_access
+  - attack.t1003.002
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    Image|endswith: '\reg.exe'
+    CommandLine|contains:
+      - 'save'
+      - 'export'
+    CommandLine|contains:
+      - 'HKLM\SAM'
+      - 'HKLM\SYSTEM'
+      - 'HKLM\SECURITY'
+  condition: selection
+falsepositives:
+  - Legitimate system backup procedures
+  - Authorized forensic activities
+level: high
+---
+title: Shadow Copy Creation for Credential Access
+id: d6e7f8a9-b0c1-0d2e-3f4a-5b6c7d8e9f0a
+status: production
+description: Detects shadow copy creation often used for offline credential extraction
+author: Threat Hunting Team
+date: 2024/03/05
+modified: 2025/12/20
+references:
+  - https://attack.mitre.org/techniques/T1003/
+tags:
+  - attack.credential_access
+  - attack.t1003
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_vssadmin:
+    Image|endswith: '\vssadmin.exe'
+    CommandLine|contains:
+      - 'create'
+      - 'shadow'
+  selection_wmic:
+    Image|endswith: '\wmic.exe'
+    CommandLine|contains|all:
+      - 'shadowcopy'
+      - 'create'
+  condition: selection_vssadmin or selection_wmic
+falsepositives:
+  - Legitimate backup operations
+  - System restore activities
+level: medium
+---
+title: NTDS.dit File Access
+id: e7f8a9b0-c1d2-1e3f-4a5b-6c7d8e9f0a1b
+status: production
+description: Detects access to Active Directory database file
+author: Threat Hunting Team
+date: 2024/03/05
+modified: 2025/12/20
+references:
+  - https://attack.mitre.org/techniques/T1003/003/
+tags:
+  - attack.credential_access
+  - attack.t1003.003
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID:
+      - 4656
+      - 4663
+    ObjectName|contains: '\ntds.dit'
+  filter:
+    ProcessName|endswith:
+      - '\System32\lsass.exe'
+      - '\System32\dsamain.exe'
+  condition: selection and not filter
+falsepositives:
+  - Legitimate Active Directory operations
+  - Domain controller maintenance
+level: critical
+---
+title: Memory Dump File Creation
+id: f8a9b0c1-d2e3-2f4a-5b6c-7d8e9f0a1b2c
+status: production
+description: Detects creation of memory dump files in suspicious locations
+author: Threat Hunting Team
+date: 2024/03/05
+modified: 2025/12/20
+references:
+  - https://attack.mitre.org/techniques/T1003/001/
+tags:
+  - attack.credential_access
+  - attack.t1003.001
+logsource:
+  category: file_event
+  product: windows
+detection:
+  selection:
+    TargetFilename|endswith: '.dmp'
+    TargetFilename|contains:
+      - '\Temp\'
+      - '\AppData\'
+      - '\Public\'
+      - '\ProgramData\'
+  selection_lsass:
+    TargetFilename|contains: 'lsass'
+  condition: selection or selection_lsass
+falsepositives:
+  - Legitimate crash dumps
+  - Debugging activities
+level: high
+---
+title: DCSync Attack
+id: a9b0c1d2-e3f4-3a5b-6c7d-8e9f0a1b2c3d
+status: production
+description: Detects DCSync attack - replication of credentials from Active Directory
+author: Threat Hunting Team
+date: 2024/03/05
+modified: 2025/12/20
+references:
+  - https://attack.mitre.org/techniques/T1003/006/
+  - https://adsecurity.org/?p=1729
+tags:
+  - attack.credential_access
+  - attack.t1003.006
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4662
+    Properties|contains:
+      - '1131f6aa-9c07-11d1-f79f-00c04fc2dcd2'
+      - '1131f6ad-9c07-11d1-f79f-00c04fc2dcd2'
+      - '89e95b76-444d-4c62-991a-0facbeda640c'
+  filter_dc:
+    SubjectUserName|endswith: '$'
+    SubjectUserName|startswith: 'DC'
+  condition: selection and not filter_dc
+falsepositives:
+  - Legitimate domain controller replication
+  - Authorized backup operations
+level: critical
+---
+title: PowerShell Credential Dumping
+id: b0c1d2e3-f4a5-4b6c-7d8e-9f0a1b2c3d4e
+status: production
+description: Detects PowerShell-based credential dumping scripts
+author: Threat Hunting Team
+date: 2024/03/05
+modified: 2025/12/20
+references:
+  - https://attack.mitre.org/techniques/T1003/
+tags:
+  - attack.credential_access
+  - attack.t1003
+  - attack.execution
+  - attack.t1059.001
+logsource:
+  product: windows
+  service: powershell
+  definition: 'Requires PowerShell Script Block Logging (Event ID 4104)'
+detection:
+  selection:
+    ScriptBlockText|contains:
+      - 'Invoke-Mimikatz'
+      - 'Out-Minidump'
+      - 'Get-LSASecret'
+      - 'Get-VaultCredential'
+      - 'Invoke-CredentialInjection'
+      - 'sekurlsa'
+      - 'MiniDumpWriteDump'
+  condition: selection
+falsepositives:
+  - Authorized penetration testing
+  - Security training
+level: critical

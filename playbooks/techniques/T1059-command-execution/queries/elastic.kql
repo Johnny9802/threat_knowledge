@@ -1,0 +1,132 @@
+// Malicious Command and Script Execution - Elastic KQL Queries
+// Optimized for Windows endpoint monitoring
+
+// Query 1: Encoded PowerShell Execution
+// Detects PowerShell with base64 encoding and obfuscation
+event.category: "process" AND event.type: "start" AND (
+  process.name: (powershell.exe OR pwsh.exe)
+) AND (
+  process.command_line: (*-enc* OR *-EncodedCommand* OR *-e * OR *FromBase64String* OR
+    *-w*hidden* OR *-WindowStyle*Hidden* OR *-NoP* OR *-NonI* OR *-Bypass* OR
+    *Invoke-Expression* OR *IEX* OR *[char[]]* OR *-Join*)
+)
+
+// Query 2: PowerShell Download Cradles
+// Detects PowerShell downloading remote content
+event.category: "process" AND event.type: "start" AND
+process.name: (powershell.exe OR pwsh.exe) AND
+process.command_line: (
+  *DownloadString* OR *DownloadFile* OR *Invoke-WebRequest* OR *IWR* OR
+  *wget* OR *Net.WebClient* OR *Start-BitsTransfer* OR *curl*
+) AND process.command_line: (*http* OR *https* OR *ftp*)
+
+// Query 3: Suspicious Script Execution from Temp Directories
+// Detects scripts and executables running from temp locations
+event.category: "process" AND event.type: "start" AND (
+  process.executable: (*\\AppData\\Local\\Temp\\* OR *\\Users\\Public\\* OR
+    *\\Windows\\Temp\\* OR *\\ProgramData\\*)
+) AND (
+  process.name: (*.exe OR *.bat OR *.cmd OR *.vbs OR *.js OR *.ps1 OR *.jar OR *.hta)
+)
+
+// Query 4: LOLBin Abuse - WScript/CScript Execution
+// Detects Windows Script Host abuse
+event.category: "process" AND event.type: "start" AND
+process.name: (wscript.exe OR cscript.exe) AND (
+  process.command_line: (*http* OR *.jse OR *.vbe OR *\\Users\\* OR *\\Temp\\* OR *\\Public\\*)
+)
+
+// Query 5: Rundll32 Suspicious Usage
+// Detects rundll32 abuse for code execution
+event.category: "process" AND event.type: "start" AND
+process.name: rundll32.exe AND (
+  process.command_line: (*javascript:* OR *vbscript:* OR *http* OR *scrobj.dll*)
+  OR NOT process.command_line: *.dll*
+)
+
+// Query 6: Regsvr32 Network Activity
+// Detects regsvr32 with network indicators (Squiblydoo technique)
+event.category: "process" AND event.type: "start" AND
+process.name: regsvr32.exe AND (
+  process.command_line: (*http* OR */i:* OR *scrobj.dll*)
+)
+
+// Query 7: Certutil Abuse for Download
+// Detects certutil being used to download or decode files
+event.category: "process" AND event.type: "start" AND
+process.name: certutil.exe AND (
+  process.command_line: (*-decode* OR *-urlcache* OR *http* OR *-verifyctl* OR *-f*)
+)
+
+// Query 8: BITSAdmin File Transfer
+// Detects BITS being used for file transfer
+event.category: "process" AND event.type: "start" AND
+process.name: bitsadmin.exe AND (
+  process.command_line: (*/transfer* OR */download* OR */upload* OR */addfile*)
+)
+
+// Query 9: WMIC Suspicious Execution
+// Detects WMIC abuse for remote execution or download
+event.category: "process" AND event.type: "start" AND
+process.name: wmic.exe AND (
+  process.command_line: (*process*call*create* OR */format:*http* OR *node:*)
+)
+
+// Query 10: Mshta Execution
+// Detects mshta.exe execution (often used for malware)
+event.category: "process" AND event.type: "start" AND
+process.name: mshta.exe AND (
+  process.command_line: (*http* OR *javascript:* OR *vbscript:* OR *.hta*)
+)
+
+// Query 11: Suspicious Office Child Processes
+// Detects Office apps spawning scripting interpreters
+event.category: "process" AND event.type: "start" AND
+process.parent.name: (WINWORD.EXE OR EXCEL.EXE OR POWERPNT.EXE OR OUTLOOK.EXE) AND
+process.name: (powershell.exe OR cmd.exe OR wscript.exe OR cscript.exe OR
+  mshta.exe OR rundll32.exe OR regsvr32.exe OR certutil.exe OR bitsadmin.exe)
+
+// Query 12: Browser Spawning Suspicious Processes
+// Detects web browsers launching interpreters (drive-by downloads)
+event.category: "process" AND event.type: "start" AND
+process.parent.name: (chrome.exe OR firefox.exe OR iexplore.exe OR msedge.exe) AND
+process.name: (powershell.exe OR cmd.exe OR wscript.exe OR cscript.exe OR mshta.exe)
+
+// Query 13: PowerShell Reflective Code Injection
+// Detects PowerShell using reflection for code injection
+event.category: "process" AND event.type: "start" AND
+process.name: (powershell.exe OR pwsh.exe) AND
+process.command_line: (*System.Reflection.Assembly* OR *[Reflection.Assembly]* OR
+  *Load* AND *byte[]* OR *VirtualAlloc* OR *CreateThread*)
+
+// Query 14: PowerShell AMSI Bypass Attempts
+// Detects attempts to bypass Antimalware Scan Interface
+event.category: "process" AND event.type: "start" AND
+process.name: (powershell.exe OR pwsh.exe) AND
+process.command_line: (*AmsiUtils* OR *amsiInitFailed* OR *AmsiScanBuffer* OR
+  *Bypass* AND *AMSI* OR *[Ref].Assembly.GetType*)
+
+// Query 15: CMD Execution with Pipe Obfuscation
+// Detects cmd.exe with pipe redirection and obfuscation
+event.category: "process" AND event.type: "start" AND
+process.name: cmd.exe AND
+process.command_line: (*|* OR *^* OR *&* OR *;*) AND
+process.command_line: (*powershell* OR *wscript* OR *cscript* OR *mshta*)
+
+// Query 16: Suspicious Scheduled Task Execution
+// Detects schtasks creating tasks that run scripts
+event.category: "process" AND event.type: "start" AND
+process.name: schtasks.exe AND
+process.command_line: (*/create* AND (*powershell* OR *wscript* OR *cmd* OR *.vbs* OR *.js*))
+
+// Query 17: Process Injection - CreateRemoteThread
+// Detects CreateRemoteThread API calls (process injection)
+event.category: "process" AND event.action: "CreateRemoteThread" AND
+process.name: (powershell.exe OR cmd.exe OR rundll32.exe)
+
+// Query 18: Multiple PowerShell Executions in Short Time
+// Detects rapid PowerShell execution (potential automation/malware)
+event.category: "process" AND event.type: "start" AND
+process.name: (powershell.exe OR pwsh.exe)
+| stats count() by host.name, user.name, process.parent.name
+| where count > 10

@@ -1,0 +1,204 @@
+title: Phishing Email with Suspicious Attachment
+id: a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d
+status: production
+description: Detects emails with potentially malicious attachments commonly used in phishing campaigns
+author: Threat Hunting Team
+date: 2024/01/15
+modified: 2025/12/20
+references:
+  - https://attack.mitre.org/techniques/T1566/001/
+  - https://www.cisa.gov/sites/default/files/publications/phishing_guidance.pdf
+tags:
+  - attack.initial_access
+  - attack.t1566
+  - attack.t1566.001
+logsource:
+  product: email_gateway
+  service: mail
+detection:
+  selection_attachment_dangerous:
+    attachment_extension:
+      - 'exe'
+      - 'scr'
+      - 'bat'
+      - 'vbs'
+      - 'js'
+      - 'jar'
+      - 'cmd'
+      - 'ps1'
+      - 'hta'
+  selection_attachment_office_macro:
+    attachment_extension:
+      - 'docm'
+      - 'xlsm'
+      - 'pptm'
+      - 'dotm'
+  selection_attachment_archive:
+    attachment_extension:
+      - 'zip'
+      - 'rar'
+      - '7z'
+      - 'iso'
+      - 'img'
+      - 'vhd'
+  selection_external_sender:
+    sender_domain:
+      - 'gmail.com'
+      - 'outlook.com'
+      - 'yahoo.com'
+      - 'hotmail.com'
+      - 'protonmail.com'
+  filter_trusted:
+    sender_domain:
+      - 'yourdomain.com'
+      - 'trusted-partner.com'
+  condition: (selection_attachment_dangerous or selection_attachment_office_macro or selection_attachment_archive) and selection_external_sender and not filter_trusted
+falsepositives:
+  - Legitimate business communications with file attachments
+  - Automated system notifications
+  - Partner organizations sending documents
+level: high
+---
+title: Phishing Email with Authentication Failures
+id: b2c3d4e5-f6a7-5b8c-9d0e-1f2a3b4c5d6e
+status: production
+description: Detects emails that fail SPF, DKIM, or DMARC authentication checks, indicating potential spoofing
+author: Threat Hunting Team
+date: 2024/01/15
+modified: 2025/12/20
+references:
+  - https://attack.mitre.org/techniques/T1566/
+  - https://dmarc.org/overview/
+tags:
+  - attack.initial_access
+  - attack.t1566
+logsource:
+  product: email_gateway
+  service: mail
+detection:
+  selection_spf_fail:
+    spf_result:
+      - 'fail'
+      - 'softfail'
+  selection_dkim_fail:
+    dkim_result: 'fail'
+  selection_dmarc_fail:
+    dmarc_result: 'fail'
+  selection_suspicious_content:
+    subject|contains:
+      - 'urgent'
+      - 'verify'
+      - 'suspend'
+      - 'locked'
+      - 'unusual activity'
+      - 'confirm your account'
+      - 'action required'
+      - 'security alert'
+  condition: (selection_spf_fail or selection_dkim_fail or selection_dmarc_fail) and selection_suspicious_content
+falsepositives:
+  - Misconfigured legitimate email servers
+  - Forwarded emails
+  - Mailing list distributions
+level: high
+---
+title: Credential Phishing with Suspicious URLs
+id: c3d4e5f6-a7b8-6c9d-0e1f-2a3b4c5d6e7f
+status: production
+description: Detects phishing emails containing links to credential harvesting pages
+author: Threat Hunting Team
+date: 2024/01/15
+modified: 2025/12/20
+references:
+  - https://attack.mitre.org/techniques/T1566/002/
+tags:
+  - attack.initial_access
+  - attack.t1566
+  - attack.t1566.002
+  - attack.credential_access
+logsource:
+  product: email_gateway
+  service: mail
+detection:
+  selection_url_keywords:
+    url_domain|contains:
+      - 'login'
+      - 'signin'
+      - 'verify'
+      - 'secure'
+      - 'account'
+      - 'update'
+      - 'confirm'
+  selection_suspicious_tld:
+    url_domain|endswith:
+      - '.tk'
+      - '.ml'
+      - '.ga'
+      - '.cf'
+      - '.gq'
+      - '.xyz'
+  selection_url_shortener:
+    url_domain|startswith:
+      - 'bit.ly'
+      - 'tinyurl.com'
+      - 'goo.gl'
+      - 't.co'
+  filter_legitimate:
+    url_domain|contains:
+      - 'microsoft.com'
+      - 'office.com'
+      - 'google.com'
+      - 'yourdomain.com'
+  condition: (selection_url_keywords and (selection_suspicious_tld or selection_url_shortener)) and not filter_legitimate
+falsepositives:
+  - Legitimate password reset emails
+  - Marketing campaigns using URL shorteners
+  - Newsletter subscriptions
+level: high
+---
+title: Email to Process Execution Chain
+id: d4e5f6a7-b8c9-7d0e-1f2a-3b4c5d6e7f8a
+status: production
+description: Detects suspicious process execution shortly after email with attachment is received
+author: Threat Hunting Team
+date: 2024/01/15
+modified: 2025/12/20
+references:
+  - https://attack.mitre.org/techniques/T1566/001/
+  - https://attack.mitre.org/techniques/T1204/002/
+tags:
+  - attack.initial_access
+  - attack.execution
+  - attack.t1566.001
+  - attack.t1204.002
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_process:
+    Image|endswith:
+      - '\powershell.exe'
+      - '\cmd.exe'
+      - '\wscript.exe'
+      - '\cscript.exe'
+      - '\mshta.exe'
+      - '\rundll32.exe'
+      - '\regsvr32.exe'
+  selection_location:
+    Image|contains:
+      - '\AppData\Local\Temp\'
+      - '\Downloads\'
+      - '\Users\Public\'
+  selection_parent:
+    ParentImage|endswith:
+      - '\outlook.exe'
+      - '\WINWORD.EXE'
+      - '\EXCEL.EXE'
+      - '\POWERPNT.EXE'
+      - '\7zFM.exe'
+      - '\WinRAR.exe'
+  condition: (selection_process or selection_location) and selection_parent
+falsepositives:
+  - Legitimate macro-enabled documents from trusted sources
+  - Automated business processes
+  - Software installations
+level: high

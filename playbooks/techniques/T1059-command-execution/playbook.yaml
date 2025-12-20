@@ -1,0 +1,79 @@
+id: PB-T1059-001
+name: "Malicious Command and Script Execution"
+description: "Detect suspicious PowerShell, command line, and scripting interpreter abuse for malware execution and persistence"
+
+mitre:
+  technique: T1059
+  tactic: execution
+  subtechniques: [T1059.001, T1059.003, T1059.005, T1059.007]
+
+severity: high
+author: Threat Hunting Team
+created: 2024-02-10
+updated: 2025-12-20
+
+data_sources:
+  - Windows Event Logs (Event ID 4688)
+  - Sysmon (Event IDs 1, 3, 7)
+  - PowerShell Operational Logs (Event ID 4104)
+  - EDR Telemetry
+
+hunt_hypothesis: |
+  Adversaries frequently abuse built-in Windows command-line interfaces and scripting
+  interpreters to execute malicious code, evade defenses, and maintain persistence.
+
+  This playbook hunts for:
+  1. Obfuscated PowerShell commands (base64, encoding, download cradles)
+  2. Suspicious command-line execution patterns (LOLBins, encoded commands)
+  3. Script execution from unusual locations (temp, public, appdata)
+  4. PowerShell downloading and executing remote content
+  5. Command-line execution with suspicious parent processes
+  6. WScript/CScript abuse for malicious VBScript/JScript
+
+  We focus on patterns that deviate from normal system administration activities,
+  particularly commands executed by non-admin users or from unexpected parent processes.
+
+queries:
+  splunk: queries/splunk.spl
+  elastic: queries/elastic.kql
+  sigma: queries/sigma.yml
+
+investigation_steps:
+  - Examine the full command line for obfuscation, encoding, or suspicious flags
+  - Identify the parent process and execution chain to understand how the command was launched
+  - Check if the user account typically executes such commands (baseline behavior)
+  - Look for file creation, network connections, or registry modifications following execution
+  - Search for similar commands executed on other endpoints (lateral movement)
+  - Analyze PowerShell script block logs (Event ID 4104) for full script content
+  - Check for persistence mechanisms (scheduled tasks, registry run keys)
+  - Review process memory for injected code or suspicious modules
+
+false_positives:
+  - Legitimate system administration scripts run by IT staff
+  - Automated deployment and configuration management tools (SCCM, Ansible)
+  - Software installation and update processes
+  - Security tools and EDR agents using PowerShell for monitoring
+  - Developer workstations running build and test scripts
+  - Scheduled tasks for system maintenance
+
+iocs:
+  - type: hash
+    value: "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+    context: "Known malicious PowerShell script hash"
+  - type: domain
+    value: "pastebin.com"
+    context: "Commonly used for hosting malicious scripts"
+  - type: file
+    value: "C:\\Users\\Public\\update.ps1"
+    context: "Suspicious PowerShell script in public directory"
+  - type: registry
+    value: "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+    context: "Common persistence location"
+
+references:
+  - https://attack.mitre.org/techniques/T1059/
+  - https://www.fireeye.com/blog/threat-research/2018/03/dosfuscation-exploring-obfuscation-and-detection-techniques.html
+  - https://www.microsoft.com/en-us/security/blog/2022/01/15/destructive-malware-targeting-ukrainian-organizations/
+  - https://github.com/redcanaryco/atomic-red-team/tree/master/atomics/T1059.001
+
+tags: [powershell, command-line, execution, obfuscation, living-off-the-land, scripts]

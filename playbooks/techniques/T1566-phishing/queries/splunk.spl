@@ -1,0 +1,112 @@
+```
+# Phishing Detection - Splunk SPL Query
+# Detects suspicious emails with malicious indicators
+
+# Query 1: Suspicious Email Attachments
+# Searches for emails with potentially malicious file types
+index=email sourcetype=mail
+(
+  # Dangerous attachment extensions
+  (attachment_name="*.exe" OR attachment_name="*.scr" OR attachment_name="*.bat"
+   OR attachment_name="*.vbs" OR attachment_name="*.js" OR attachment_name="*.jar"
+   OR attachment_name="*.cmd" OR attachment_name="*.ps1" OR attachment_name="*.hta")
+  OR
+  # Office files with macros
+  (attachment_name="*.doc" OR attachment_name="*.docm" OR attachment_name="*.xls"
+   OR attachment_name="*.xlsm" OR attachment_name="*.ppt" OR attachment_name="*.pptm")
+  OR
+  # Suspicious archives
+  (attachment_name="*.zip" OR attachment_name="*.rar" OR attachment_name="*.7z"
+   OR attachment_name="*.iso" OR attachment_name="*.img")
+)
+| eval attachment_ext=lower(replace(attachment_name, ".*\.(.*)", "\1"))
+| eval risk_score=case(
+    match(attachment_ext, "exe|scr|bat|vbs|js|cmd|ps1|hta"), 90,
+    match(attachment_ext, "docm|xlsm|pptm"), 70,
+    match(attachment_ext, "zip|rar|7z|iso|img"), 50,
+    1=1, 30
+  )
+| where risk_score >= 50
+| eval external_sender=if(match(sender_domain, "gmail\.com|outlook\.com|yahoo\.com|hotmail\.com"), "External", "Unknown")
+| stats
+    count as email_count,
+    values(recipient) as recipients,
+    values(subject) as subjects,
+    values(attachment_name) as attachments,
+    max(risk_score) as max_risk
+  by sender, sender_domain, external_sender
+| where email_count > 1 OR max_risk > 70
+| sort - max_risk, - email_count
+| table sender, sender_domain, external_sender, email_count, max_risk, subjects, attachments, recipients
+
+# Query 2: Credential Harvesting Links
+# Detects emails with links to fake login pages
+index=email sourcetype=mail
+| rex field=message max_match=0 "(?i)https?://(?<url_domain>[^/\s\"<>]+)"
+| mvexpand url_domain
+| eval url_domain=lower(url_domain)
+| search
+  (
+    # Common phishing keywords in URLs
+    url_domain="*login*" OR url_domain="*signin*" OR url_domain="*secure*"
+    OR url_domain="*verify*" OR url_domain="*update*" OR url_domain="*confirm*"
+    OR url_domain="*account*" OR url_domain="*password*"
+  )
+  AND
+  (
+    # Suspicious TLDs or URL shorteners
+    url_domain="*.tk" OR url_domain="*.ml" OR url_domain="*.ga" OR url_domain="*.cf"
+    OR url_domain="bit.ly/*" OR url_domain="tinyurl.com/*" OR url_domain="*.gq"
+  )
+| stats
+    count as link_count,
+    values(subject) as subjects,
+    values(recipient) as recipients,
+    dc(recipient) as recipient_count
+  by sender, url_domain
+| where link_count > 2 OR recipient_count > 5
+| sort - recipient_count, - link_count
+| table sender, url_domain, link_count, recipient_count, subjects, recipients
+
+# Query 3: Email Authentication Failures
+# Finds emails that fail SPF, DKIM, or DMARC checks
+index=email sourcetype=mail
+(spf_result="fail" OR spf_result="softfail" OR dkim_result="fail" OR dmarc_result="fail")
+| eval auth_failures=0
+| eval auth_failures=if(spf_result="fail" OR spf_result="softfail", auth_failures+1, auth_failures)
+| eval auth_failures=if(dkim_result="fail", auth_failures+1, auth_failures)
+| eval auth_failures=if(dmarc_result="fail", auth_failures+1, auth_failures)
+| where auth_failures >= 2
+| eval urgency_keywords=if(match(subject, "(?i)(urgent|immediate|action required|verify|suspended|locked|unusual activity|confirm)"), "Yes", "No")
+| stats
+    count as email_count,
+    values(subject) as subjects,
+    values(recipient) as recipients,
+    values(urgency_keywords) as has_urgency
+  by sender, sender_domain, spf_result, dkim_result, dmarc_result
+| where email_count > 1 OR has_urgency="Yes"
+| sort - email_count
+| table sender, sender_domain, spf_result, dkim_result, dmarc_result, email_count, has_urgency, subjects, recipients
+
+# Query 4: Email to Execution Chain
+# Correlates email delivery with immediate file execution
+index=email sourcetype=mail
+  (attachment_name="*.exe" OR attachment_name="*.scr" OR attachment_name="*.bat"
+   OR attachment_name="*.vbs" OR attachment_name="*.js" OR attachment_name="*.doc*"
+   OR attachment_name="*.xls*" OR attachment_name="*.zip")
+| eval email_time=_time
+| eval recipient_user=lower(mvindex(split(recipient, "@"), 0))
+| table email_time, recipient_user, sender, subject, attachment_name, recipient
+| join type=inner recipient_user
+  [
+    search index=windows sourcetype="WinEventLog:Sysmon" EventCode=1
+    | eval exec_time=_time
+    | eval recipient_user=lower(User)
+    | where exec_time > relative_time(now(), "-1h")
+    | table exec_time, recipient_user, Image, CommandLine, ParentImage
+  ]
+| where (exec_time - email_time) < 600 AND exec_time > email_time
+| eval time_diff_minutes=round((exec_time - email_time)/60, 2)
+| table email_time, exec_time, time_diff_minutes, recipient_user, sender, subject, attachment_name, Image, CommandLine
+| sort time_diff_minutes
+```

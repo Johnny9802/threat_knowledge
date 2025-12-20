@@ -1,0 +1,77 @@
+id: PB-T1566-001
+name: "Phishing Email Detection and Analysis"
+description: "Detect and investigate phishing emails with malicious attachments, suspicious links, and credential harvesting attempts"
+
+mitre:
+  technique: T1566
+  tactic: initial-access
+  subtechniques: [T1566.001, T1566.002, T1566.003]
+
+severity: high
+author: Threat Hunting Team
+created: 2024-01-15
+updated: 2025-12-20
+
+data_sources:
+  - Email Gateway Logs (Proofpoint, Mimecast, O365)
+  - Web Proxy Logs (Zscaler, Palo Alto)
+  - Endpoint Detection (EDR, Sysmon)
+  - DNS Logs
+
+hunt_hypothesis: |
+  Adversaries frequently use phishing as an initial access vector to deliver malware,
+  steal credentials, or establish command and control. This playbook hunts for:
+
+  1. Emails with suspicious attachments (macros, executables, archives)
+  2. Emails with credential harvesting links
+  3. Unusual sender domains and spoofed addresses
+  4. Click-through events to suspicious URLs from email clients
+  5. File execution immediately following email delivery
+
+  We expect to find legitimate marketing emails and some false positives from
+  trusted automated systems, but genuine phishing attempts should exhibit
+  multiple suspicious characteristics.
+
+queries:
+  splunk: queries/splunk.spl
+  elastic: queries/elastic.kql
+  sigma: queries/sigma.yml
+
+investigation_steps:
+  - Check sender reputation and domain age using threat intelligence
+  - Analyze email headers for SPF/DKIM/DMARC authentication failures
+  - Extract and detonate suspicious attachments in sandbox environment
+  - Check URL reputation and redirect chains
+  - Identify other recipients and potential victims
+  - Search for similar emails using sender patterns and content hashes
+  - Check for post-delivery actions (file execution, credential submission)
+  - Review user's recent authentication logs for anomalies
+
+false_positives:
+  - Legitimate marketing emails with tracking links
+  - Automated notifications from trusted business applications
+  - Newsletter subscriptions with embedded content
+  - Partner communications with file attachments
+  - Calendar invitations from external organizations
+  - Legitimate password reset emails
+
+iocs:
+  - type: domain
+    value: "secure-login-verify.com"
+    context: "Credential harvesting domain mimicking legitimate services"
+  - type: domain
+    value: "microsoftonline-verify.net"
+    context: "Spoofed Microsoft login page"
+  - type: hash
+    value: "d41d8cd98f00b204e9800998ecf8427e"
+    context: "Common macro-enabled document hash"
+  - type: url
+    value: "hxxp://bit[.]ly/3x*"
+    context: "URL shortener commonly used in phishing"
+
+references:
+  - https://attack.mitre.org/techniques/T1566/
+  - https://www.cisa.gov/sites/default/files/publications/defending_against_malicious_cyber_activity_originating_from_tor.pdf
+  - https://www.microsoft.com/en-us/security/blog/2021/03/25/analyzing-attacks-taking-advantage-of-the-exchange-server-vulnerabilities/
+
+tags: [phishing, email, initial-access, credential-theft, malware-delivery]

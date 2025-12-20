@@ -1,0 +1,179 @@
+```
+# OS Credential Dumping Detection - Splunk SPL Queries
+# Detects LSASS access, SAM dumping, and credential theft
+
+# Query 1: Direct LSASS Process Access
+# Detects processes accessing LSASS memory (mimikatz, procdump, etc.)
+index=windows sourcetype="WinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=10
+  TargetImage="*\\lsass.exe"
+  (GrantedAccess="0x1010" OR GrantedAccess="0x1410" OR GrantedAccess="0x1438"
+   OR GrantedAccess="0x143a" OR GrantedAccess="0x1fffff" OR GrantedAccess="0x1000")
+| eval SourceProcess=mvindex(split(SourceImage, "\\"), -1)
+| eval suspicious_source=if(match(SourceImage, "(?i)(temp|public|appdata|programdata|users|downloads)"), "Yes", "No")
+| eval high_privilege_access=if(match(GrantedAccess, "(?i)(1fffff|1410|1438|143a)"), "Yes", "No")
+| lookup process_whitelist.csv SourceProcess OUTPUT is_whitelisted
+| where isnull(is_whitelisted) OR is_whitelisted="false"
+| stats
+    count as access_count,
+    values(ComputerName) as affected_hosts,
+    values(User) as users,
+    dc(ComputerName) as host_count
+  by SourceImage, TargetImage, GrantedAccess, suspicious_source, high_privilege_access
+| where access_count > 1 OR high_privilege_access="Yes" OR suspicious_source="Yes"
+| sort - high_privilege_access, - access_count
+| table SourceImage, GrantedAccess, access_count, host_count, suspicious_source, high_privilege_access, users, affected_hosts
+
+# Query 2: Mimikatz Command Line Detection
+# Detects known Mimikatz command patterns and similar tools
+index=windows (sourcetype="WinEventLog:Security" EventCode=4688 OR sourcetype="WinEventLog:Sysmon" EventCode=1)
+(
+  CommandLine="*sekurlsa::*" OR CommandLine="*lsadump::*" OR CommandLine="*kerberos::*"
+  OR CommandLine="*privilege::debug*" OR CommandLine="*token::elevate*"
+  OR CommandLine="*vault::cred*" OR CommandLine="*crypto::*"
+  OR CommandLine="*lsass.dmp*" OR CommandLine="*procdump*-ma*lsass*"
+  OR CommandLine="*comsvcs.dll*MiniDump*" OR CommandLine="*Out-Minidump*"
+  OR CommandLine="*Invoke-Mimikatz*" OR CommandLine="*mimikatz.exe*"
+  OR (CommandLine="*rundll32*" AND CommandLine="*comsvcs*" AND CommandLine="*#24*")
+)
+| eval process_name=mvindex(split(coalesce(NewProcessName, Image), "\\"), -1)
+| eval is_powershell=if(match(process_name, "(?i)powershell"), "Yes", "No")
+| eval is_rundll32_dump=if(match(CommandLine, "(?i)(rundll32.*comsvcs.*minidump)"), "Yes", "No")
+| eval mimikatz_module=case(
+    match(CommandLine, "(?i)sekurlsa"), "sekurlsa",
+    match(CommandLine, "(?i)lsadump"), "lsadump",
+    match(CommandLine, "(?i)kerberos"), "kerberos",
+    match(CommandLine, "(?i)procdump"), "procdump",
+    match(CommandLine, "(?i)minidump"), "minidump",
+    1=1, "unknown"
+  )
+| stats
+    count as exec_count,
+    values(ComputerName) as hosts,
+    values(User) as users,
+    dc(User) as user_count
+  by CommandLine, process_name, mimikatz_module, is_powershell, is_rundll32_dump
+| sort - exec_count
+| table CommandLine, process_name, mimikatz_module, exec_count, user_count, is_powershell, is_rundll32_dump, users, hosts
+
+# Query 3: SAM and SYSTEM Registry Hive Access
+# Detects attempts to copy or access SAM database
+index=windows (sourcetype="WinEventLog:Security" OR sourcetype="WinEventLog:Sysmon")
+  (EventCode=4663 OR EventCode=4656 OR EventCode=1)
+  (
+    ObjectName="*\\SAM\\SAM*" OR ObjectName="*\\SYSTEM\\*"
+    OR CommandLine="*reg*save*HKLM\\SAM*" OR CommandLine="*reg*save*HKLM\\SYSTEM*"
+    OR CommandLine="*reg*export*HKLM\\SAM*" OR CommandLine="*reg*export*HKLM\\SECURITY*"
+    OR CommandLine="*vssadmin*create*shadow*" OR CommandLine="*copy*\\windows\\system32\\config\\SAM*"
+  )
+| eval action_type=case(
+    match(CommandLine, "(?i)reg.*save"), "Registry Save",
+    match(CommandLine, "(?i)reg.*export"), "Registry Export",
+    match(CommandLine, "(?i)vssadmin.*shadow"), "Shadow Copy",
+    match(CommandLine, "(?i)copy.*SAM"), "File Copy",
+    match(ObjectName, "SAM"), "Registry Access",
+    1=1, "Other"
+  )
+| eval process_name=mvindex(split(coalesce(ProcessName, Image), "\\"), -1)
+| stats
+    count as access_count,
+    values(ComputerName) as hosts,
+    values(User) as users,
+    values(CommandLine) as commands
+  by action_type, process_name
+| sort - access_count
+| table action_type, process_name, access_count, users, hosts, commands
+
+# Query 4: NTDS.dit Access on Domain Controllers
+# Detects access to Active Directory database file
+index=windows sourcetype="WinEventLog:Security" (EventCode=4663 OR EventCode=4656)
+  ObjectName="*\\ntds.dit*"
+| eval process_name=mvindex(split(ProcessName, "\\"), -1)
+| stats
+    count as access_count,
+    values(ComputerName) as domain_controllers,
+    values(SubjectUserName) as users,
+    values(AccessMask) as access_masks,
+    values(ProcessName) as processes
+  by ObjectName
+| table ObjectName, access_count, users, domain_controllers, access_masks, processes
+
+# Query 5: Shadow Copy Creation for Credential Theft
+# Detects shadow copy creation often used for offline credential extraction
+index=windows (sourcetype="WinEventLog:Security" EventCode=4688 OR sourcetype="WinEventLog:Sysmon" EventCode=1)
+  (CommandLine="*vssadmin*create*shadow*" OR CommandLine="*wmic*shadowcopy*call*create*"
+   OR CommandLine="*vssadmin*list*shadows*" OR CommandLine="*Copy-VSS*")
+| eval method=case(
+    match(CommandLine, "(?i)vssadmin.*create"), "vssadmin create",
+    match(CommandLine, "(?i)wmic.*shadowcopy"), "wmic shadowcopy",
+    match(CommandLine, "(?i)Copy-VSS"), "PowerShell VSS",
+    1=1, "other"
+  )
+| transaction User, ComputerName maxspan=10m
+    [search index=windows (sourcetype="WinEventLog:Security" EventCode=4688 OR sourcetype="WinEventLog:Sysmon" EventCode=1)
+     (CommandLine="*copy*" OR CommandLine="*ntds.dit*" OR CommandLine="*SAM*" OR CommandLine="*SYSTEM*")]
+| stats
+    count as event_count,
+    values(CommandLine) as all_commands,
+    values(method) as shadow_methods
+  by User, ComputerName
+| table User, ComputerName, event_count, shadow_methods, all_commands
+
+# Query 6: Credential Dumping from Process Memory (PowerShell)
+# Detects PowerShell-based credential dumping
+index=windows sourcetype="WinEventLog:Microsoft-Windows-PowerShell/Operational" EventCode=4104
+  (ScriptBlockText="*Invoke-Mimikatz*" OR ScriptBlockText="*Get-TimedScreenshot*"
+   OR ScriptBlockText="*Get-Keystrokes*" OR ScriptBlockText="*Invoke-CredentialInjection*"
+   OR ScriptBlockText="*Invoke-TokenManipulation*" OR ScriptBlockText="*Get-LSASecret*"
+   OR ScriptBlockText="*Get-VaultCredential*" OR ScriptBlockText="*Out-Minidump*"
+   OR ScriptBlockText="*sekurlsa*" OR ScriptBlockText="*System.Management.Automation.WindowsErrorReporting*")
+| eval script_hash=md5(ScriptBlockText)
+| eval has_mimikatz=if(match(ScriptBlockText, "(?i)mimikatz"), "Yes", "No")
+| eval has_minidump=if(match(ScriptBlockText, "(?i)minidump"), "Yes", "No")
+| eval has_credential=if(match(ScriptBlockText, "(?i)(credential|password|lsasecret)"), "Yes", "No")
+| stats
+    count as exec_count,
+    values(ComputerName) as hosts,
+    values(ScriptBlockId) as script_ids,
+    dc(script_hash) as unique_scripts
+  by User, has_mimikatz, has_minidump, has_credential
+| sort - exec_count
+| table User, has_mimikatz, has_minidump, has_credential, exec_count, unique_scripts, hosts
+
+# Query 7: Dump File Creation in Temp Directories
+# Detects .dmp files being created (memory dumps)
+index=windows sourcetype="WinEventLog:Sysmon" EventCode=11
+  (TargetFilename="*.dmp" OR TargetFilename="*lsass*" OR TargetFilename="*dump*")
+  (TargetFilename="*\\Temp\\*" OR TargetFilename="*\\AppData\\*"
+   OR TargetFilename="*\\Users\\Public\\*" OR TargetFilename="*\\ProgramData\\*")
+| eval file_name=mvindex(split(TargetFilename, "\\"), -1)
+| eval location_risk=case(
+    match(TargetFilename, "(?i)\\\\temp\\\\"), "High",
+    match(TargetFilename, "(?i)\\\\appdata\\\\"), "High",
+    match(TargetFilename, "(?i)\\\\public\\\\"), "High",
+    1=1, "Medium"
+  )
+| stats
+    count as file_count,
+    values(ComputerName) as hosts,
+    values(User) as users,
+    values(Image) as creating_processes
+  by file_name, TargetFilename, location_risk
+| sort - location_risk, - file_count
+| table file_name, TargetFilename, location_risk, file_count, users, creating_processes, hosts
+
+# Query 8: Network Credential Dumping (DCSync)
+# Detects DCSync attacks (replication of credentials from DC)
+index=windows sourcetype="WinEventLog:Security" EventCode=4662
+  ObjectType="*-bbd2-*" AccessMask="0x100"
+  (Properties="*1131f6aa-9c07-11d1-f79f-00c04fc2dcd2*"
+   OR Properties="*1131f6ad-9c07-11d1-f79f-00c04fc2dcd2*"
+   OR Properties="*89e95b76-444d-4c62-991a-0facbeda640c*")
+| stats
+    count as replication_attempts,
+    values(ComputerName) as source_hosts,
+    dc(ObjectName) as unique_objects
+  by SubjectUserName, ObjectServer
+| where replication_attempts > 1 OR unique_objects > 5
+| sort - replication_attempts
+| table SubjectUserName, ObjectServer, replication_attempts, unique_objects, source_hosts
+```

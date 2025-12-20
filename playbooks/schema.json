@@ -1,0 +1,125 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Threat Hunting Playbook Schema",
+  "description": "Schema for threat hunting playbook YAML files",
+  "type": "object",
+  "required": ["id", "name", "description", "mitre", "severity", "author", "created", "hunt_hypothesis", "queries"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^PB-T[0-9]{4}-[0-9]{3}$",
+      "description": "Unique playbook identifier (e.g., PB-T1566-001)"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 5,
+      "description": "Playbook name"
+    },
+    "description": {
+      "type": "string",
+      "description": "Brief description of the playbook"
+    },
+    "mitre": {
+      "type": "object",
+      "required": ["technique", "tactic"],
+      "properties": {
+        "technique": {
+          "type": "string",
+          "pattern": "^T[0-9]{4}$"
+        },
+        "tactic": {
+          "type": "string"
+        },
+        "subtechniques": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^T[0-9]{4}\\.[0-9]{3}$"
+          }
+        }
+      }
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["critical", "high", "medium", "low"]
+    },
+    "author": {
+      "type": "string"
+    },
+    "created": {
+      "type": "string",
+      "format": "date"
+    },
+    "updated": {
+      "type": "string",
+      "format": "date"
+    },
+    "data_sources": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "hunt_hypothesis": {
+      "type": "string",
+      "description": "Narrative description of the hunting hypothesis"
+    },
+    "queries": {
+      "type": "object",
+      "properties": {
+        "splunk": {
+          "type": "string"
+        },
+        "elastic": {
+          "type": "string"
+        },
+        "sigma": {
+          "type": "string"
+        }
+      }
+    },
+    "investigation_steps": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "false_positives": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "iocs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["domain", "ip", "hash", "url", "email", "file", "registry"]
+          },
+          "value": {
+            "type": "string"
+          },
+          "context": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "references": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uri"
+      }
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

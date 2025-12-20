@@ -1,0 +1,80 @@
+id: PB-T1003-001
+name: "OS Credential Dumping Detection"
+description: "Detect credential theft attempts including LSASS dumping, SAM database access, and Mimikatz-style attacks"
+
+mitre:
+  technique: T1003
+  tactic: credential-access
+  subtechniques: [T1003.001, T1003.002, T1003.003, T1003.004, T1003.005]
+
+severity: critical
+author: Threat Hunting Team
+created: 2024-03-05
+updated: 2025-12-20
+
+data_sources:
+  - Windows Security Event Logs (Event ID 4688, 4656, 4663)
+  - Sysmon (Event IDs 1, 10, 11)
+  - EDR Telemetry
+  - PowerShell Logs
+
+hunt_hypothesis: |
+  Credential dumping is a critical post-exploitation technique used by adversaries to
+  obtain credentials for lateral movement and privilege escalation. This playbook hunts for:
+
+  1. Direct LSASS process memory access (mimikatz, procdump, comsvcs.dll)
+  2. SAM and SYSTEM registry hive access or copying
+  3. NTDS.dit extraction from domain controllers
+  4. Credential dumping tools and their variants
+  5. Suspicious PowerShell credential access attempts
+  6. Shadow copy creation for offline credential extraction
+
+  Legitimate credential access is extremely rare in most environments. Any detection
+  should be treated as high priority and investigated immediately. System administrators
+  may occasionally use debugging tools, but this should be tightly controlled and logged.
+
+queries:
+  splunk: queries/splunk.spl
+  elastic: queries/elastic.kql
+  sigma: queries/sigma.yml
+
+investigation_steps:
+  - Immediately isolate the affected system if active credential dumping is detected
+  - Identify the user account and verify if it's legitimate/authorized
+  - Check parent process and execution chain to understand attack vector
+  - Search for additional credential dumping attempts across the environment
+  - Examine memory dumps or process artifacts for malware/tools
+  - Review recent authentication events for suspicious lateral movement
+  - Check for persistence mechanisms (scheduled tasks, services, registry)
+  - Force password resets for affected accounts and high-privilege users
+  - Review domain controller security logs for NTDS.dit access
+  - Analyze network traffic for credential material exfiltration
+
+false_positives:
+  - Authorized security assessments and penetration testing
+  - Antivirus and EDR products accessing LSASS for monitoring
+  - Legitimate debugging by system administrators (rare, should be tracked)
+  - Backup software accessing system files
+  - Some monitoring and management tools
+
+iocs:
+  - type: hash
+    value: "a8a0d8e89f9c48bb12a85aedfe12d6e9"
+    context: "Mimikatz executable hash"
+  - type: file
+    value: "C:\\Windows\\Temp\\lsass.dmp"
+    context: "LSASS memory dump file"
+  - type: registry
+    value: "HKLM\\SAM\\SAM"
+    context: "SAM database registry key"
+  - type: file
+    value: "C:\\Windows\\NTDS\\ntds.dit"
+    context: "Active Directory database file"
+
+references:
+  - https://attack.mitre.org/techniques/T1003/
+  - https://www.microsoft.com/security/blog/2022/10/05/detecting-and-preventing-lsass-credential-dumping-attacks/
+  - https://github.com/gentilkiwi/mimikatz
+  - https://www.elastic.co/blog/hunting-for-credential-access
+
+tags: [credentials, lsass, mimikatz, sam, ntds, password-theft, post-exploitation]

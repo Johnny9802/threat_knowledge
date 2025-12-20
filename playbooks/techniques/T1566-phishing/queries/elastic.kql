@@ -1,0 +1,86 @@
+// Phishing Detection - Elastic KQL Queries
+// Optimized for Elastic SIEM and Kibana
+
+// Query 1: Suspicious Email Attachments with High-Risk Extensions
+// Detects emails containing potentially malicious file attachments
+event.category: "email" AND (
+  email.attachments.file.extension: (exe OR scr OR bat OR vbs OR js OR jar OR cmd OR ps1 OR hta OR docm OR xlsm OR pptm OR zip OR rar OR 7z OR iso OR img)
+) AND NOT (
+  email.from.address: (*@yourdomain.com OR *@trusted-partner.com)
+)
+| stats count() by email.from.address, email.from.domain, email.subject, email.attachments.file.name, email.to.address
+| where count > 1
+
+// Query 2: Credential Phishing - Suspicious Keywords with External Links
+// Identifies emails with urgency keywords and suspicious links
+event.category: "email" AND (
+  email.subject: (*urgent* OR *verify* OR *suspend* OR *confirm* OR *secure* OR *update* OR *action*required* OR *unusual*activity*)
+) AND (
+  url.domain: (*.tk OR *.ml OR *.ga OR *.cf OR *.gq OR bit.ly OR tinyurl.com OR *login* OR *signin* OR *verify*)
+) AND NOT (
+  email.from.domain: (yourdomain.com OR microsoft.com OR google.com OR known-vendor.com)
+)
+
+// Query 3: Email Authentication Failures (SPF/DKIM/DMARC)
+// Finds emails that fail authentication checks, indicating spoofing
+event.category: "email" AND (
+  email.authentication.spf.result: (fail OR softfail OR none) OR
+  email.authentication.dkim.result: fail OR
+  email.authentication.dmarc.result: fail
+) AND (
+  email.subject: (*urgent* OR *verify* OR *account* OR *password* OR *confirm* OR *suspended*)
+  OR email.attachments.file.extension: *
+)
+| stats count(), values(email.subject) by email.from.address, email.from.domain, email.authentication.spf.result, email.authentication.dkim.result, email.authentication.dmarc.result
+
+// Query 4: URL Click-Through from Email Client
+// Correlates email links with browser navigation events
+sequence by user.name with maxspan=10m
+  [event.category: "email" AND url.domain: *]
+  [event.category: "web" AND event.action: "url_clicked"]
+| where event[0].url.domain == event[1].url.domain
+
+// Query 5: Email Followed by File Execution
+// Detects email delivery followed by suspicious process execution
+sequence by user.name with maxspan=30m
+  [event.category: "email" AND email.attachments.file.extension: (exe OR scr OR bat OR vbs OR js OR docm OR xlsm OR zip)]
+  [event.category: "process" AND event.type: "start" AND (
+    process.name: (powershell.exe OR cmd.exe OR wscript.exe OR cscript.exe OR mshta.exe OR rundll32.exe OR regsvr32.exe) OR
+    process.executable: (*\\AppData\\Local\\Temp\\* OR *\\Downloads\\*)
+  )]
+
+// Query 6: Mass Phishing Campaign Detection
+// Identifies same email sent to multiple recipients
+event.category: "email"
+| stats dc(email.to.address) as recipient_count, values(email.to.address) as recipients by email.subject, email.from.address, email.message_id
+| where recipient_count > 10
+
+// Query 7: Newly Registered Domain in Email
+// Detects emails from recently registered domains (requires enrichment)
+event.category: "email" AND dns.domain_age_days: < 30 AND (
+  email.subject: (*urgent* OR *verify* OR *account* OR *password*)
+  OR email.attachments.file.extension: *
+)
+
+// Query 8: Suspicious Reply-To Address Mismatch
+// Finds emails where reply-to differs from sender
+event.category: "email" AND email.reply_to.address: * AND NOT (
+  email.from.address: email.reply_to.address
+)
+| where email.from.domain != email.reply_to.domain
+| stats count() by email.from.address, email.reply_to.address, email.subject
+
+// Query 9: Base64 Encoded Content in Email
+// Detects emails with suspicious base64 content (often used for obfuscation)
+event.category: "email" AND email.message.body: /[A-Za-z0-9+\/]{50,}={0,2}/
+| where length(email.message.body) > 1000
+
+// Query 10: Phishing with Office Document Macros
+// Specifically targets macro-enabled Office documents
+event.category: "email" AND email.attachments.file.extension: (doc OR docm OR xls OR xlsm OR ppt OR pptm) AND (
+  email.attachments.file.size: > 10000 OR
+  email.subject: (*invoice* OR *payment* OR *order* OR *delivery* OR *resume* OR *cv*)
+) AND NOT (
+  email.from.domain: (yourdomain.com OR trusted-vendor.com)
+)
+| stats count(), values(email.subject), values(email.attachments.file.name) by email.from.address, email.from.domain
