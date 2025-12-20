@@ -2,10 +2,11 @@
 
 import os
 import shutil
-from pathlib import Path
-from typing import Dict, Any, Optional
-import yaml
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+import yaml
 
 
 class PlaybookWriter:
@@ -37,26 +38,27 @@ class PlaybookWriter:
         Raises:
             ValueError: If playbook already exists or data is invalid
         """
-        playbook_id = playbook_data.get('id')
+        playbook_id = playbook_data.get("id")
         if not playbook_id:
             raise ValueError("Playbook ID is required")
 
         # Extract technique from MITRE data or ID
-        technique = playbook_data.get('mitre', {}).get('technique', '')
+        technique = playbook_data.get("mitre", {}).get("technique", "")
         if not technique:
             # Try to extract from ID (e.g., PB-T1566-001 -> T1566)
             import re
-            match = re.search(r'T\d+', playbook_id)
+
+            match = re.search(r"T\d+", playbook_id)
             if match:
                 technique = match.group(0)
             else:
                 raise ValueError("Unable to determine MITRE technique")
 
         # Get tactic name for directory
-        tactic = playbook_data.get('mitre', {}).get('tactic', 'unknown')
+        tactic = playbook_data.get("mitre", {}).get("tactic", "unknown")
 
         # Create directory name: T1566-phishing or T1566-tactic-name
-        dir_name = f"{technique}-{tactic}".lower().replace(' ', '-')
+        dir_name = f"{technique}-{tactic}".lower().replace(" ", "-")
         playbook_dir = self.playbooks_dir / dir_name
 
         # Check if already exists
@@ -69,31 +71,31 @@ class PlaybookWriter:
         queries_dir.mkdir(exist_ok=True)
 
         # Separate queries_content from main playbook data
-        queries_content = playbook_data.pop('queries_content', {})
+        queries_content = playbook_data.pop("queries_content", {})
 
         # Create queries dict with file references
         if queries_content:
-            playbook_data['queries'] = {}
+            playbook_data["queries"] = {}
             for siem, content in queries_content.items():
                 filename = self._get_query_filename(siem)
                 query_path = queries_dir / filename
 
                 # Write query file
-                with open(query_path, 'w') as f:
+                with open(query_path, "w") as f:
                     f.write(content)
 
                 # Add reference to playbook
-                playbook_data['queries'][siem] = f"queries/{filename}"
+                playbook_data["queries"][siem] = f"queries/{filename}"
 
         # Write playbook.yaml
         playbook_file = playbook_dir / "playbook.yaml"
-        with open(playbook_file, 'w') as f:
+        with open(playbook_file, "w") as f:
             yaml.dump(
                 playbook_data,
                 f,
                 default_flow_style=False,
                 allow_unicode=True,
-                sort_keys=False
+                sort_keys=False,
             )
 
         return playbook_dir
@@ -117,28 +119,28 @@ class PlaybookWriter:
         playbook_file = playbook_dir / "playbook.yaml"
 
         # Load existing playbook
-        with open(playbook_file, 'r') as f:
+        with open(playbook_file, "r") as f:
             existing_data = yaml.safe_load(f)
 
         # Handle queries_content separately
-        queries_content = update_data.pop('queries_content', None)
+        queries_content = update_data.pop("queries_content", None)
         if queries_content:
             queries_dir = playbook_dir / "queries"
             queries_dir.mkdir(exist_ok=True)
 
-            if 'queries' not in existing_data:
-                existing_data['queries'] = {}
+            if "queries" not in existing_data:
+                existing_data["queries"] = {}
 
             for siem, content in queries_content.items():
                 filename = self._get_query_filename(siem)
                 query_path = queries_dir / filename
 
                 # Write/update query file
-                with open(query_path, 'w') as f:
+                with open(query_path, "w") as f:
                     f.write(content)
 
                 # Update reference
-                existing_data['queries'][siem] = f"queries/{filename}"
+                existing_data["queries"][siem] = f"queries/{filename}"
 
         # Merge update data
         for key, value in update_data.items():
@@ -146,16 +148,16 @@ class PlaybookWriter:
                 existing_data[key] = value
 
         # Update timestamp
-        existing_data['updated'] = datetime.now().isoformat()
+        existing_data["updated"] = datetime.now().isoformat()
 
         # Write updated playbook
-        with open(playbook_file, 'w') as f:
+        with open(playbook_file, "w") as f:
             yaml.dump(
                 existing_data,
                 f,
                 default_flow_style=False,
                 allow_unicode=True,
-                sort_keys=False
+                sort_keys=False,
             )
 
     def delete_playbook(self, playbook_id: str) -> None:
@@ -181,9 +183,9 @@ class PlaybookWriter:
                 playbook_file = technique_dir / "playbook.yaml"
                 if playbook_file.exists():
                     try:
-                        with open(playbook_file, 'r') as f:
+                        with open(playbook_file, "r") as f:
                             data = yaml.safe_load(f)
-                            if data.get('id') == playbook_id:
+                            if data.get("id") == playbook_id:
                                 return technique_dir
                     except Exception:
                         continue
@@ -191,10 +193,6 @@ class PlaybookWriter:
 
     def _get_query_filename(self, siem: str) -> str:
         """Get the appropriate filename for a SIEM query."""
-        extensions = {
-            'splunk': 'spl',
-            'elastic': 'kql',
-            'sigma': 'yml'
-        }
-        ext = extensions.get(siem.lower(), 'txt')
+        extensions = {"splunk": "spl", "elastic": "kql", "sigma": "yml"}
+        ext = extensions.get(siem.lower(), "txt")
         return f"{siem.lower()}.{ext}"
