@@ -290,6 +290,146 @@ tags: [tag1, tag2]
 
 ---
 
+## Troubleshooting
+
+### Common Errors and Solutions
+
+#### 1. Docker Container Conflicts
+
+**Error:**
+```
+Error response from daemon: Conflict. The container name "/threat-hunting-cache" is already in use
+```
+
+**Solution:**
+If you moved or renamed the project folder, old Docker containers may conflict with new ones. Remove the old containers:
+
+```bash
+docker rm -f threat-hunting-proxy threat-hunting-api threat-hunting-db threat-hunting-cache
+docker-compose up -d
+```
+
+#### 2. Frontend "Failed to load playbooks" / Error 500
+
+**Possible Causes:**
+- Docker containers not running
+- API service not healthy
+
+**Solution:**
+```bash
+# Check container status
+docker-compose ps
+
+# If containers are not running, start them
+docker-compose up -d
+
+# Check API logs for errors
+docker-compose logs api
+```
+
+#### 3. Frontend "Failed to save configuration to server"
+
+**Cause:** The backend API is not reachable.
+
+**Solution:**
+1. Ensure all Docker services are running: `docker-compose ps`
+2. Check if API responds: `curl http://localhost:8001/health`
+3. If using the development frontend, ensure `npm run dev` is running
+
+#### 4. "GROQ_API_KEY" or "OPENAI_API_KEY" warnings
+
+**Warning:**
+```
+The "GROQ_API_KEY" variable is not set. Defaulting to a blank string.
+```
+
+**Note:** This is just a warning and does not prevent the application from running. AI features will be disabled until you configure an API key in Settings.
+
+To enable AI features, create a `.env` file:
+```bash
+cp .env.example .env
+# Edit .env and add your API keys
+```
+
+#### 5. Frontend Development Server Errors
+
+**Error:**
+```
+[vite] Failed to resolve import "../lib/utils"
+```
+
+**Solution:** Make sure you have all dependencies installed:
+```bash
+cd guiweb
+npm install
+npm run dev
+```
+
+#### 6. API Not Accessible on Port 80
+
+**Issue:** Going to `http://localhost` shows API JSON instead of the web interface.
+
+**Explanation:** In Docker mode, Nginx proxies all requests to the API. The frontend needs to be built and included in the Docker image, or run separately in development mode.
+
+**For Development:**
+```bash
+# Terminal 1: Run Docker services
+docker-compose up -d
+
+# Terminal 2: Run frontend dev server
+cd guiweb
+npm install
+npm run dev
+
+# Access frontend at http://localhost:3000
+```
+
+#### 7. Database Connection Issues
+
+**Error:**
+```
+sqlalchemy.exc.OperationalError: (psycopg2.OperationalError) could not connect to server
+```
+
+**Solution:**
+```bash
+# Wait for PostgreSQL to be healthy
+docker-compose up -d
+sleep 10
+
+# Verify database is running
+docker-compose logs postgres
+
+# If needed, restart all services
+docker-compose down
+docker-compose up -d
+```
+
+### Port Reference
+
+| Service | Port | Description |
+|---------|------|-------------|
+| Nginx (Docker) | 80, 443 | Reverse proxy |
+| API | 8001 | FastAPI backend |
+| Frontend (dev) | 3000 | Vite dev server |
+| PostgreSQL | 5433 | Database |
+| Redis | 6380 | Cache |
+
+### Health Checks
+
+```bash
+# API health
+curl http://localhost:8001/health
+
+# Docker services status
+docker-compose ps
+
+# View all logs
+docker-compose logs -f
+```
+
+---
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
