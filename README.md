@@ -63,6 +63,14 @@ Modern Security Operations Centers face significant challenges:
 - **MITRE Matrix View** with interactive coverage visualization
 - **Settings Panel** for API and AI configuration
 
+### Sigma Translator
+- **Sigma → SPL Conversion**: Convert Sigma detection rules to Splunk SPL queries
+- **SPL → Sigma Conversion**: Reverse engineer SPL queries into Sigma format
+- **Prerequisites Analysis**: See required log sources, Event IDs, and setup instructions
+- **Alternative Sources**: View Windows native vs Sysmon alternatives for each detection
+- **Config Warnings**: Automatic checks for missing Sysmon/Audit configurations
+- **SigmaHQ Browser**: Browse and import rules directly from the SigmaHQ repository
+
 ---
 
 ## Quick Start
