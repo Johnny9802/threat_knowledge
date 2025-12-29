@@ -12,3 +12,4 @@ export { default as PostMortem } from './PostMortem';
 export { default as PlaybookForm } from './PlaybookForm';
 export { default as SigmaConverter } from './SigmaConverter';
 export { default as SigmaMappings } from './SigmaMappings';
+export { default as SigmaExamples } from './SigmaExamples';

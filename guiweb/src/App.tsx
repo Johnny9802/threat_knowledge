@@ -11,6 +11,7 @@ import {
   PostMortem,
   SigmaConverter,
   SigmaMappings,
+  SigmaExamples,
 } from './components';
 import PlaybookForm from './components/PlaybookForm';
 
@@ -38,6 +39,7 @@ function App() {
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/mitre" element={<MitreMatrix />} />
               <Route path="/sigma" element={<SigmaConverter />} />
+              <Route path="/sigma/examples" element={<SigmaExamples />} />
               <Route path="/sigma/mappings" element={<SigmaMappings />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/post-mortem" element={<PostMortem />} />
