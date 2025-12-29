@@ -8,6 +8,7 @@ from .schemas import (
     MappingStatusEnum,
     PrerequisiteInfo,
     RequiredLogSource,
+    AlternativeLogSource,
     GapItem,
     HealthCheck,
     MappingResult,
@@ -343,6 +344,19 @@ class ConverterService:
         2004: {"name": "Firewall Rule Modified", "source": "Firewall"},
         2005: {"name": "Firewall Rule Deleted", "source": "Firewall"},
         2006: {"name": "Firewall Rules Deleted", "source": "Firewall"},
+        # AppLocker
+        8002: {"name": "AppLocker policy applied", "source": "AppLocker"},
+        8003: {"name": "EXE/DLL would be allowed", "source": "AppLocker"},
+        8004: {"name": "EXE/DLL blocked", "source": "AppLocker"},
+        8005: {"name": "Script would be allowed", "source": "AppLocker"},
+        8006: {"name": "Script would be blocked", "source": "AppLocker"},
+        8007: {"name": "DLL required to run", "source": "AppLocker"},
+        8020: {"name": "MSI/Script would be allowed", "source": "AppLocker"},
+        8021: {"name": "Packaged app would be allowed", "source": "AppLocker"},
+        8022: {"name": "MSI blocked", "source": "AppLocker"},
+        8023: {"name": "Packaged app blocked", "source": "AppLocker"},
+        8024: {"name": "Packaged app would be allowed (audit)", "source": "AppLocker"},
+        8025: {"name": "Script blocked", "source": "AppLocker"},
     }
 
     # Detailed log source information
@@ -413,6 +427,35 @@ class ConverterService:
             "setup_instructions": [
                 "Windows Defender logging is enabled by default when Defender is active",
                 "Configure Splunk to collect Windows Defender event log",
+            ],
+        },
+        "applocker": {
+            "name": "Windows AppLocker",
+            "description": "Application control policy events - blocks and allows for executables, DLLs, scripts, and installers",
+            "windows_channel": "Microsoft-Windows-AppLocker/EXE and DLL",
+            "splunk_sourcetype": "XmlWinEventLog:Microsoft-Windows-AppLocker/EXE and DLL",
+            "setup_instructions": [
+                "Enable AppLocker via GPO: Computer Configuration > Windows Settings > Security Settings > Application Control Policies > AppLocker",
+                "Configure rules for Executable Rules, Windows Installer Rules, Script Rules, and Packaged app Rules",
+                "Set enforcement mode: Audit Only (events logged but not blocked) or Enforce Rules",
+                "Ensure Application Identity service (AppIDSvc) is running: sc config appidsvc start=auto && net start appidsvc",
+                "Configure Splunk Universal Forwarder to collect AppLocker event logs from all 4 channels",
+            ],
+            "alternative_sources": [
+                {
+                    "name": "Windows Security (Process Creation)",
+                    "description": "Use Event ID 4688 for basic process execution tracking - less detailed than AppLocker but available without additional configuration",
+                    "event_ids": [4688],
+                    "setup": "Enable via GPO: Advanced Audit Policy > Detailed Tracking > Audit Process Creation. Also enable command line logging: Administrative Templates > System > Audit Process Creation > Include command line",
+                    "is_sysmon_alternative": False,
+                },
+                {
+                    "name": "Sysmon Process Creation",
+                    "description": "Use Sysmon Event ID 1 for detailed process creation logging with hashes, parent process, and command line",
+                    "event_ids": [1],
+                    "setup": "Install Sysmon with a configuration that enables ProcessCreate events",
+                    "is_sysmon_alternative": True,
+                },
             ],
         },
     }
@@ -715,32 +758,50 @@ class ConverterService:
         service = logsource.get("service", "")
         category = logsource.get("category", "")
 
-        # Event IDs
+        # Event IDs - collect from multiple sources
         event_ids = []
-        eventcode = ls_info.get("eventcode")
-        if eventcode:
-            if isinstance(eventcode, int):
-                info = self.EVENT_INFO.get(eventcode, {})
+        seen_ids = set()
+
+        def add_event_id(code: int):
+            if code not in seen_ids:
+                seen_ids.add(code)
+                info = self.EVENT_INFO.get(code, {})
                 event_ids.append(
                     {
-                        "id": eventcode,
+                        "id": code,
                         "name": info.get("name", "Unknown"),
                         "source": info.get("source", "Unknown"),
                     }
                 )
+
+        # 1. Check ls_info eventcode (from LOGSOURCE_MAPPING)
+        eventcode = ls_info.get("eventcode")
+        if eventcode:
+            if isinstance(eventcode, int):
+                add_event_id(eventcode)
             elif isinstance(eventcode, str):
-                # Parse multiple event codes
                 codes = re.findall(r"\d+", str(eventcode))
                 for code in codes:
-                    code_int = int(code)
-                    info = self.EVENT_INFO.get(code_int, {})
-                    event_ids.append(
-                        {
-                            "id": code_int,
-                            "name": info.get("name", "Unknown"),
-                            "source": info.get("source", "Unknown"),
-                        }
-                    )
+                    add_event_id(int(code))
+
+        # 2. Extract EventID/EventCode from detection block
+        detection = rule.get("detection", {})
+        for block_name, block_value in detection.items():
+            if block_name == "condition":
+                continue
+            if isinstance(block_value, dict):
+                # Check for EventID or EventCode fields
+                for field in ["EventID", "EventCode", "event_id", "eventid"]:
+                    if field in block_value:
+                        val = block_value[field]
+                        if isinstance(val, int):
+                            add_event_id(val)
+                        elif isinstance(val, list):
+                            for v in val:
+                                if isinstance(v, int):
+                                    add_event_id(v)
+                                elif isinstance(v, str) and v.isdigit():
+                                    add_event_id(int(v))
 
         # Channels
         channels = []
@@ -770,6 +831,11 @@ class ConverterService:
             product, service, category, event_ids
         )
 
+        # Check if any required log source has alternatives
+        has_alternatives = any(
+            len(log.alternatives) > 0 for log in required_logs
+        )
+
         return PrerequisiteInfo(
             log_source={
                 "product": logsource.get("product", "unknown"),
@@ -780,6 +846,7 @@ class ConverterService:
             event_ids=event_ids,
             channels=channels,
             configuration=configuration,
+            has_alternatives=has_alternatives,
         )
 
     def _determine_required_logs(
@@ -843,7 +910,22 @@ class ConverterService:
                     or (key == "security" and evt.get("source") == "Security")
                     or (key == "powershell" and evt.get("source") == "PowerShell")
                     or (key == "firewall" and evt.get("source") == "Firewall")
+                    or (key == "applocker" and evt.get("source") == "AppLocker")
                 ]
+
+                # Build alternative log sources if available
+                alternatives = []
+                alt_sources = log_info.get("alternative_sources", [])
+                for alt in alt_sources:
+                    alternatives.append(
+                        AlternativeLogSource(
+                            name=alt.get("name", ""),
+                            description=alt.get("description", ""),
+                            event_ids=alt.get("event_ids", []),
+                            setup=alt.get("setup", ""),
+                            is_sysmon_alternative=alt.get("is_sysmon_alternative", False),
+                        )
+                    )
 
                 required_logs.append(
                     RequiredLogSource(
@@ -853,6 +935,7 @@ class ConverterService:
                         splunk_sourcetype=log_info.get("splunk_sourcetype"),
                         event_ids=source_event_ids,
                         setup_instructions=log_info.get("setup_instructions", []),
+                        alternatives=alternatives,
                     )
                 )
 

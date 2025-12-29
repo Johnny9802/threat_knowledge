@@ -28,8 +28,11 @@ import {
   generateFromDescription,
   listProfiles,
   getSigmaLLMStatus,
+  getActiveSysmonConfig,
+  getActiveAuditConfig,
   type ConversionResponse,
   type SigmaProfile,
+  type AlternativeLogSource,
 } from '../services/sigmaApi';
 
 type ConversionMode = 'sigma-to-spl' | 'spl-to-sigma' | 'describe';
@@ -65,6 +68,7 @@ export default function SigmaConverter() {
   const [result, setResult] = useState<ConversionResponse | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState<number | undefined>();
   const [activeTab, setActiveTab] = useState<'output' | 'prerequisites' | 'mappings' | 'gaps' | 'health'>('output');
+  const [activePrereqTab, setActivePrereqTab] = useState<'primary' | 'alternatives'>('primary');
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -89,6 +93,18 @@ export default function SigmaConverter() {
   const { data: llmStatus } = useQuery({
     queryKey: ['sigma-llm-status'],
     queryFn: getSigmaLLMStatus,
+  });
+
+  // Fetch active Sysmon config (for warnings)
+  const { data: activeSysmonConfig } = useQuery({
+    queryKey: ['active-sysmon-config'],
+    queryFn: getActiveSysmonConfig,
+  });
+
+  // Fetch active Windows Audit config (for warnings)
+  const { data: activeAuditConfig } = useQuery({
+    queryKey: ['active-audit-config'],
+    queryFn: getActiveAuditConfig,
   });
 
   // Conversion mutation
@@ -461,36 +477,171 @@ to extract passwords and hashes from the system.`,
               </pre>
             ) : activeTab === 'prerequisites' ? (
               <div className="p-4 space-y-4">
-                {result.prerequisites.required_logs?.map((log, idx) => (
-                  <div key={idx} className="p-3 bg-gray-800/50 rounded-lg">
-                    <h4 className="font-medium text-white">{log.name}</h4>
-                    <p className="text-sm text-gray-400 mt-1">{log.description}</p>
-                    {log.windows_channel && (
-                      <p className="text-xs text-gray-500 mt-2">Channel: {log.windows_channel}</p>
-                    )}
-                    {log.setup_instructions.length > 0 && (
-                      <div className="mt-2">
-                        <p className="text-xs font-medium text-gray-400">Setup:</p>
-                        <ul className="text-xs text-gray-500 list-disc list-inside mt-1">
-                          {log.setup_instructions.map((step, i) => (
-                            <li key={i}>{step}</li>
+                {/* Config Status Warnings */}
+                {(() => {
+                  const requiresSysmon = result.prerequisites.required_logs?.some(
+                    log => log.name?.toLowerCase().includes('sysmon')
+                  );
+                  const hasSysmonConfig = activeSysmonConfig?.available;
+                  const hasAuditConfig = activeAuditConfig?.available;
+
+                  return (
+                    <>
+                      {requiresSysmon && !hasSysmonConfig && (
+                        <div className="flex items-start gap-3 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+                          <AlertTriangle className="text-yellow-400 flex-shrink-0 mt-0.5" size={18} />
+                          <div>
+                            <p className="text-yellow-400 font-medium">Sysmon configuration not detected</p>
+                            <p className="text-sm text-gray-400 mt-1">
+                              This rule requires Sysmon events. Check the "Alternatives" tab for Windows native options.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                      {!hasSysmonConfig && !hasAuditConfig && (
+                        <div className="flex items-start gap-3 p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+                          <Info className="text-blue-400 flex-shrink-0 mt-0.5" size={18} />
+                          <div>
+                            <p className="text-blue-400 font-medium">No logging configuration loaded</p>
+                            <p className="text-sm text-gray-400 mt-1">
+                              Upload a Sysmon or Windows Audit config in Settings to check coverage automatically.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+
+                {/* Sub-tabs for Primary vs Alternatives */}
+                {result.prerequisites.has_alternatives && (
+                  <div className="flex gap-1 p-1 bg-gray-800/50 rounded-lg w-fit">
+                    <button
+                      onClick={() => setActivePrereqTab('primary')}
+                      className={cn(
+                        "px-3 py-1.5 rounded text-sm font-medium transition-colors",
+                        activePrereqTab === 'primary'
+                          ? "bg-cyan-500/20 text-cyan-400"
+                          : "text-gray-400 hover:text-gray-200"
+                      )}
+                    >
+                      Primary Sources
+                    </button>
+                    <button
+                      onClick={() => setActivePrereqTab('alternatives')}
+                      className={cn(
+                        "px-3 py-1.5 rounded text-sm font-medium transition-colors",
+                        activePrereqTab === 'alternatives'
+                          ? "bg-cyan-500/20 text-cyan-400"
+                          : "text-gray-400 hover:text-gray-200"
+                      )}
+                    >
+                      Alternatives
+                    </button>
+                  </div>
+                )}
+
+                {/* Primary Sources Content */}
+                {activePrereqTab === 'primary' && (
+                  <>
+                    {result.prerequisites.required_logs?.map((log, idx) => (
+                      <div key={idx} className="p-3 bg-gray-800/50 rounded-lg">
+                        <h4 className="font-medium text-white">{log.name}</h4>
+                        <p className="text-sm text-gray-400 mt-1">{log.description}</p>
+                        {log.windows_channel && (
+                          <p className="text-xs text-gray-500 mt-2">
+                            <span className="text-gray-400">Channel:</span> {log.windows_channel}
+                          </p>
+                        )}
+                        {log.splunk_sourcetype && (
+                          <p className="text-xs text-gray-500 mt-1">
+                            <span className="text-gray-400">Sourcetype:</span> {log.splunk_sourcetype}
+                          </p>
+                        )}
+                        {log.event_ids?.length > 0 && (
+                          <div className="mt-2">
+                            <p className="text-xs font-medium text-gray-400">Required Event IDs:</p>
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {log.event_ids.map((evt, i) => (
+                                <span key={i} className="px-2 py-0.5 bg-gray-700 rounded text-xs text-gray-300">
+                                  {evt.id}: {evt.name}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {log.setup_instructions?.length > 0 && (
+                          <div className="mt-2">
+                            <p className="text-xs font-medium text-gray-400">Setup:</p>
+                            <ul className="text-xs text-gray-500 list-disc list-inside mt-1 space-y-0.5">
+                              {log.setup_instructions.map((step, i) => (
+                                <li key={i}>{step}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    {result.prerequisites.event_ids?.length > 0 && (
+                      <div className="p-3 bg-gray-800/50 rounded-lg">
+                        <h4 className="font-medium text-white">All Event IDs</h4>
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {result.prerequisites.event_ids.map((evt, idx) => (
+                            <span key={idx} className="px-2 py-1 bg-gray-700 rounded text-xs text-gray-300">
+                              {evt.id}: {evt.name} ({evt.source})
+                            </span>
                           ))}
-                        </ul>
+                        </div>
                       </div>
                     )}
-                  </div>
-                ))}
-                {result.prerequisites.event_ids?.length > 0 && (
-                  <div className="p-3 bg-gray-800/50 rounded-lg">
-                    <h4 className="font-medium text-white">Event IDs</h4>
-                    <div className="flex flex-wrap gap-2 mt-2">
-                      {result.prerequisites.event_ids.map((evt, idx) => (
-                        <span key={idx} className="px-2 py-1 bg-gray-700 rounded text-xs text-gray-300">
-                          {evt.id}: {evt.name}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
+                  </>
+                )}
+
+                {/* Alternatives Content */}
+                {activePrereqTab === 'alternatives' && (
+                  <>
+                    {result.prerequisites.required_logs?.flatMap((log, logIdx) =>
+                      log.alternatives?.map((alt: AlternativeLogSource, altIdx: number) => (
+                        <div key={`${logIdx}-${altIdx}`} className="p-3 bg-gray-800/50 rounded-lg border-l-2 border-cyan-500/50">
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-medium text-white">{alt.name}</h4>
+                            {alt.is_sysmon_alternative && (
+                              <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 text-xs rounded">
+                                Sysmon
+                              </span>
+                            )}
+                            {!alt.is_sysmon_alternative && (
+                              <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs rounded">
+                                Windows Native
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-sm text-gray-400 mt-1">{alt.description}</p>
+                          {alt.event_ids?.length > 0 && (
+                            <div className="mt-2">
+                              <p className="text-xs font-medium text-gray-400">Event IDs:</p>
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {alt.event_ids.map((evtId, i) => (
+                                  <span key={i} className="px-2 py-0.5 bg-gray-700 rounded text-xs text-gray-300">
+                                    {evtId}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          <div className="mt-2 p-2 bg-gray-900/50 rounded">
+                            <p className="text-xs font-medium text-gray-400">Setup:</p>
+                            <p className="text-xs text-gray-500 mt-1">{alt.setup}</p>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                    {!result.prerequisites.required_logs?.some(log => log.alternatives?.length > 0) && (
+                      <div className="flex items-center justify-center p-8 text-gray-500">
+                        <p>No alternative log sources available for this rule</p>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             ) : activeTab === 'mappings' ? (

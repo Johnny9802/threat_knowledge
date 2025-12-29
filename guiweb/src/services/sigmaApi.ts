@@ -48,6 +48,14 @@ export interface SigmaRule {
   description?: string;
 }
 
+export interface AlternativeLogSource {
+  name: string;
+  description: string;
+  event_ids: number[];
+  setup: string;
+  is_sysmon_alternative: boolean;
+}
+
 export interface RequiredLogSource {
   name: string;
   description: string;
@@ -55,6 +63,7 @@ export interface RequiredLogSource {
   splunk_sourcetype?: string;
   event_ids: Array<{ id: number; name: string; source: string }>;
   setup_instructions: string[];
+  alternatives: AlternativeLogSource[];
 }
 
 export interface PrerequisiteInfo {
@@ -63,6 +72,7 @@ export interface PrerequisiteInfo {
   event_ids: Array<{ id: number; name: string; source: string }>;
   channels: string[];
   configuration: string[];
+  has_alternatives: boolean;
 }
 
 export interface GapItem {

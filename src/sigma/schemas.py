@@ -115,6 +115,15 @@ class DescribeRequest(BaseModel):
     include_attack_techniques: bool = False
 
 
+class AlternativeLogSource(BaseModel):
+    """Alternative log source option for when primary source is not available."""
+    name: str
+    description: str
+    event_ids: List[int] = []
+    setup: str
+    is_sysmon_alternative: bool = False
+
+
 class RequiredLogSource(BaseModel):
     name: str
     description: str
@@ -122,6 +131,7 @@ class RequiredLogSource(BaseModel):
     splunk_sourcetype: Optional[str] = None
     event_ids: List[Dict[str, Any]] = []
     setup_instructions: List[str] = []
+    alternatives: List[AlternativeLogSource] = []
 
 
 class PrerequisiteInfo(BaseModel):
@@ -130,6 +140,7 @@ class PrerequisiteInfo(BaseModel):
     event_ids: List[Dict[str, Any]] = []
     channels: List[str] = []
     configuration: List[str] = []
+    has_alternatives: bool = False
 
 
 class GapItem(BaseModel):
@@ -239,6 +250,7 @@ __all__ = [
     "ConvertSigmaRequest",
     "ConvertSPLRequest",
     "DescribeRequest",
+    "AlternativeLogSource",
     "RequiredLogSource",
     "PrerequisiteInfo",
     "GapItem",
